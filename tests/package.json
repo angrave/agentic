@@ -1,0 +1,5 @@
+{
+  "type": "module",
+  "scripts": { "test": "node e2e.mjs && node stop.mjs" },
+  "devDependencies": { "playwright": "*" }
+}

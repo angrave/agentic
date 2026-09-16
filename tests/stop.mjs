@@ -1,0 +1,30 @@
+import http from "node:http"; import fs from "node:fs"; import { chromium } from "playwright";
+const reqs = [];
+const tc = (code) => ({ id: "c" + reqs.length, type: "function", function: { name: "run_python", arguments: JSON.stringify({ code }) } });
+const S = [() => ({ content: "", tool_calls: [tc("import pandas as pd\npd.DataFrame({'a':[1,2]})")] }), () => ({ content: "", tool_calls: [tc("while True:\n    pass")] }), () => ({ content: "after stop ok" })];
+const srv = http.createServer(async (q, r) => {
+  if (q.url.startsWith("/v1/chat")) { let b = ""; for await (const c of q) b += c; reqs.push(JSON.parse(b)); const m = S[Math.min(reqs.length - 1, 2)]();
+    r.writeHead(200, { "Content-Type": "application/json" }); return r.end(JSON.stringify({ choices: [{ message: { role: "assistant", ...m } }] })); }
+  r.writeHead(200, { "Content-Type": "text/html" }); r.end(fs.readFileSync(new URL("../index.html", import.meta.url)));
+});
+await new Promise(x => srv.listen(8767, x));
+const b = await chromium.launch(); const p = await b.newPage();
+p.on("pageerror", e => console.log("[pageerror]", e.message));
+await p.goto("http://localhost:8767/#endpoint=/v1&key=k&model=m");
+const ready = () => p.waitForFunction(() => document.getElementById("pytext").textContent.startsWith("Python ready"), null, { timeout: 180000 });
+await ready();
+await p.fill("#input", "go"); await p.press("#input", "Enter");
+await p.waitForFunction(() => document.querySelectorAll(".tool").length === 2, null, { timeout: 60000 });
+await p.waitForTimeout(1500);
+await p.click("#stop");
+await p.waitForFunction(() => document.body.innerText.includes("Stopped by user"), null, { timeout: 10000 });
+const res1 = await p.locator(".tool .res").first().textContent();
+console.log(res1.includes("a") && !res1.includes("ERROR") ? "ok  - DataFrame repr: " + JSON.stringify(res1) : "FAIL DataFrame repr: " + res1);
+await ready(); console.log("ok  - stop killed runaway python and it restarted");
+await p.fill("#input", "again"); await p.press("#input", "Enter");
+await p.waitForFunction(() => document.body.innerText.includes("after stop ok"), null, { timeout: 30000 });
+const last = reqs[reqs.length - 1].messages;
+const ids = last.filter(m => m.tool_calls).flatMap(m => m.tool_calls.map(t => t.id));
+console.log(ids.every(id => last.some(m => m.role === "tool" && m.tool_call_id === id)) ? "ok  - history valid after stop" : "FAIL history");
+console.log(last.some(m => m.role === "tool" && "name" in m) ? "FAIL name field present" : "ok  - no name field on tool msgs");
+await b.close(); srv.close();

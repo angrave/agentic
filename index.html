@@ -1,0 +1,946 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agentic Chat Lab</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --ink: #1d2330; --muted: #677084; --line: #dfe3ea;
+    --accent: #1f5fbf; --accent-soft: #e8f0fc; --ok: #1d7a46; --err: #b3261e; --tool: #7a4fb8; --tool-soft: #f3eefb;
+    --code: #f2f4f7;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: var(--bg); }
+  header { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 17px; margin: 0; }
+  header .sub { color: var(--muted); font-size: 12.5px; }
+  #pystatus { margin-left: auto; font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #c9a227; display: inline-block; }
+  .dot.ready { background: var(--ok); } .dot.err { background: var(--err); }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; height: calc(100% - 50px); }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; height: auto; } #side { border-left: 0; border-top: 1px solid var(--line); } #chatcol { height: 80vh; } }
+  #chatcol { display: flex; flex-direction: column; min-height: 0; }
+  #chat { flex: 1; overflow-y: auto; padding: 16px 20px; }
+  #side { border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; padding: 12px 14px; }
+  .msg { max-width: 900px; margin: 0 auto 12px; }
+  .bubble { padding: 10px 14px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); overflow-x: auto; }
+  .msg.user .bubble { background: var(--accent-soft); border-color: #c8d9f5; }
+  .msg .who { font-size: 11.5px; font-weight: 600; color: var(--muted); margin: 0 0 3px 2px; text-transform: uppercase; letter-spacing: .04em; }
+  .bubble p:first-child { margin-top: 0; } .bubble p:last-child { margin-bottom: 0; }
+  .bubble table { border-collapse: collapse; margin: 6px 0; } .bubble td, .bubble th { border: 1px solid var(--line); padding: 3px 8px; }
+  pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
+  pre { background: var(--code); padding: 8px 10px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; margin: 6px 0; }
+  .tool { border: 1px solid #d9cbef; background: var(--tool-soft); border-radius: 8px; margin: 6px auto; max-width: 900px; }
+  .tool summary { cursor: pointer; padding: 6px 10px; font-size: 13px; list-style: none; display: flex; gap: 8px; align-items: center; }
+  .tool summary::-webkit-details-marker { display: none; }
+  .tool summary .name { font-weight: 600; color: var(--tool); font-family: ui-monospace, Menlo, monospace; }
+  .tool summary .brief { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+  .tool summary .st { font-size: 12px; white-space: nowrap; }
+  .tool .body { padding: 0 10px 8px; }
+  .tool .label { font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
+  .tool img { max-width: 100%; background: #fff; border: 1px solid var(--line); border-radius: 6px; margin-top: 6px; }
+  .think { font-size: 12.5px; color: var(--muted); max-width: 900px; margin: 4px auto; }
+  .think pre { background: transparent; border-left: 3px solid var(--line); border-radius: 0; }
+  .note { text-align: center; color: var(--muted); font-size: 12.5px; margin: 8px auto; max-width: 900px; }
+  .note.err { color: var(--err); }
+  #composer { border-top: 1px solid var(--line); background: var(--panel); padding: 10px 16px 12px; }
+  #chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+  .chip { border: 1px solid var(--line); background: var(--bg); border-radius: 999px; padding: 3px 10px; font-size: 12.5px; cursor: pointer; color: var(--ink); }
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+  #inputrow { display: flex; gap: 8px; align-items: flex-end; }
+  textarea { flex: 1; resize: vertical; min-height: 46px; max-height: 240px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+  button { font: inherit; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); padding: 6px 12px; cursor: pointer; color: var(--ink); }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.danger { color: var(--err); }
+  button:disabled { opacity: .5; cursor: default; }
+  #stepinfo { font-size: 12px; color: var(--muted); margin-top: 6px; min-height: 18px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 14px 0 6px; }
+  h2:first-child { margin-top: 0; }
+  #drop { border: 2px dashed var(--line); border-radius: 8px; padding: 12px; text-align: center; color: var(--muted); font-size: 13px; cursor: pointer; }
+  #drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  #files { list-style: none; padding: 0; margin: 8px 0; }
+  #files li { display: flex; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 1px solid var(--bg); font-size: 13px; }
+  #files li .fn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #files li .sz { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+  #files li button { padding: 1px 6px; font-size: 12px; }
+  label.f { display: block; font-size: 12px; color: var(--muted); margin-top: 8px; }
+  label.f input, label.f select { display: block; width: 100%; padding: 5px 7px; border: 1px solid var(--line); border-radius: 6px; font: inherit; color: var(--ink); background: #fff; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .small { font-size: 12px; color: var(--muted); }
+  #rawdlg { width: min(1000px, 94vw); height: 85vh; border: 1px solid var(--line); border-radius: 10px; padding: 0; }
+  #rawdlg .inner { display: flex; flex-direction: column; height: 100%; }
+  #rawdlg .top { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+  #rawdlg pre { flex: 1; margin: 0; border-radius: 0; overflow: auto; white-space: pre-wrap; }
+  .empty { max-width: 640px; margin: 40px auto; color: var(--muted); }
+  .empty h3 { color: var(--ink); margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🧪 Agentic Chat Lab</h1>
+  <span class="sub">An AI agent with Python, files &amp; the web — running in your browser</span>
+  <span id="pystatus"><span class="dot" id="pydot"></span><span id="pytext">Loading Python…</span></span>
+</header>
+<main>
+  <section id="chatcol">
+    <div id="chat">
+      <div class="empty" id="empty">
+        <h3>How this works</h3>
+        <p>You chat with a large language model. It can't touch your computer directly — instead it asks to use <b>tools</b>:
+          run Python (with pandas), list/read/write files, search the web, and download pages or data.
+          Your browser runs each tool and sends the result back. The model repeats this <i>think → act → observe</i>
+          loop until it can answer. Every step is shown below as a purple card you can open.</p>
+        <p>1. Enter your API key under <b>Settings</b> (right). 2. Upload an Excel, Word or CSV file (or make a sample). 3. Ask for something.</p>
+      </div>
+    </div>
+    <div id="composer">
+      <div id="chips"></div>
+      <div id="inputrow">
+        <textarea id="input" placeholder="Ask the agent to do something… (Enter to send, Shift+Enter for new line)"></textarea>
+        <button class="primary" id="send">Send</button>
+        <button class="danger" id="stop" hidden>Stop</button>
+      </div>
+      <div id="stepinfo"></div>
+    </div>
+  </section>
+  <aside id="side">
+    <h2>Files <span class="small">(virtual, in-browser)</span></h2>
+    <div id="drop">Drop files here or <u>click to upload</u><br><span class="small">Excel, Word, CSV, text, PDF…</span></div>
+    <input type="file" id="fileinput" multiple hidden>
+    <ul id="files"></ul>
+    <div class="row">
+      <button id="sample">Make sample data</button>
+      <button id="refresh">Refresh</button>
+    </div>
+    <h2>Conversation</h2>
+    <div class="row">
+      <button id="showraw">Show raw messages</button>
+      <button id="clear">New chat</button>
+      <button id="restartpy" title="Restart Python (uploaded/downloaded files are restored)">Restart Python</button>
+    </div>
+    <h2>Settings</h2>
+    <label class="f">API endpoint (OpenAI-compatible)<input id="endpoint" placeholder="https://lumen.ncsa.illinois.edu/v1"></label>
+    <label class="f">API key<input id="apikey" type="password" autocomplete="off" placeholder="sk-…"></label>
+    <label class="f">Model<input id="model" list="modellist" placeholder="e.g. glm-5.3-flash"><datalist id="modellist"></datalist></label>
+    <div class="row"><button id="loadmodels">Load model list</button><button id="sharelink" title="Copy a link containing these settings">Copy setup link</button></div>
+    <label class="f">Max tool steps per request<input id="maxsteps" type="number" min="1" max="50"></label>
+    <label class="f">Web search provider
+      <select id="searchprov">
+        <option value="duckduckgo">DuckDuckGo (via reader proxy)</option>
+        <option value="wikipedia">Wikipedia (no proxy needed)</option>
+        <option value="searxng">SearXNG instance (URL below)</option>
+      </select>
+    </label>
+    <label class="f">SearXNG URL (optional)<input id="searxng" placeholder="https://searx.example.org"></label>
+    <label class="f">Reader proxy (web pages → text)<input id="readerproxy" placeholder="https://r.jina.ai/{url}"></label>
+    <label class="f">CORS proxy (raw downloads)<input id="corsproxy" placeholder="https://corsproxy.io/?url={enc}"></label>
+    <p class="small">Settings are stored only in this browser. <code>{url}</code> = raw URL, <code>{enc}</code> = URL-encoded. A setup link puts settings after <code>#</code>, which is never sent to the web server — but anyone with the link can use the key.</p>
+  </aside>
+</main>
+<dialog id="rawdlg"><div class="inner">
+  <div class="top"><b>Raw messages sent to the model (this is all the model "sees")</b><button id="closeraw">Close</button></div>
+  <pre id="rawpre"></pre>
+</div></dialog>
+
+<!-- ======================= Python worker ======================= -->
+<script id="worker-src" type="text/js-worker">
+const PYODIDE_URL = "https://cdn.jsdelivr.net/pyodide/v0.27.7/full/";
+importScripts(PYODIDE_URL + "pyodide.js");
+const WORK = "/home/pyodide/work";
+let py = null, out = [];
+
+const HELPERS = `
+import os, io, json, sys, traceback
+WORK = "${WORK}"
+
+def _list_files():
+    res = []
+    for root, dirs, files in os.walk(WORK):
+        dirs[:] = [d for d in dirs if not d.startswith('.')]
+        for f in files:
+            p = os.path.join(root, f)
+            st = os.stat(p)
+            res.append({"path": os.path.relpath(p, WORK), "size": st.st_size, "mtime": st.st_mtime})
+    return json.dumps(sorted(res, key=lambda r: r["path"]))
+
+def _safe(path):
+    p = os.path.normpath(os.path.join(WORK, path))
+    if not (p == WORK or p.startswith(WORK + os.sep)):
+        raise ValueError("Path must be inside the work folder: " + path)
+    return p
+
+def _preview(path, max_chars=6000):
+    p = _safe(path)
+    if not os.path.exists(p):
+        return "ERROR: file not found: %s. Use list_files to see available files." % path
+    ext = os.path.splitext(p)[1].lower()
+    size = os.path.getsize(p)
+    head = "File: %s (%d bytes)\\n" % (path, size)
+    try:
+        if ext in (".xlsx", ".xlsm", ".xls"):
+            import pandas as pd
+            sheets = pd.read_excel(p, sheet_name=None)
+            parts = [head + "Excel workbook with %d sheet(s): %s" % (len(sheets), list(sheets))]
+            for name, df in sheets.items():
+                parts.append("\\n--- Sheet %r: %d rows x %d columns ---\\nColumns: %s\\nDtypes: %s\\nFirst rows:\\n%s" % (
+                    name, df.shape[0], df.shape[1], list(df.columns), dict(df.dtypes.astype(str)), df.head(10).to_string()))
+            text = "\\n".join(parts)
+        elif ext == ".docx":
+            import docx
+            d = docx.Document(p)
+            parts = [head + "Word document"]
+            paras = [x.text for x in d.paragraphs if x.text.strip()]
+            parts.append("%d non-empty paragraphs, %d tables." % (len(paras), len(d.tables)))
+            parts.append("\\n".join(paras))
+            for i, t in enumerate(d.tables):
+                rows = [" | ".join(c.text.strip() for c in r.cells) for r in t.rows]
+                parts.append("\\n--- Table %d (%d rows) ---\\n%s" % (i + 1, len(rows), "\\n".join(rows)))
+            text = "\\n".join(parts)
+        elif ext in (".csv", ".tsv"):
+            import pandas as pd
+            df = pd.read_csv(p, sep="\\t" if ext == ".tsv" else None, engine="python")
+            text = head + "Table: %d rows x %d columns\\nColumns: %s\\nDtypes: %s\\nFirst rows:\\n%s" % (
+                df.shape[0], df.shape[1], list(df.columns), dict(df.dtypes.astype(str)), df.head(15).to_string())
+        elif ext in (".png", ".jpg", ".jpeg", ".gif", ".pdf", ".zip", ".pptx", ".parquet"):
+            text = head + "Binary file (%s). Use run_python to work with it." % ext
+        else:
+            with open(p, "rb") as f:
+                raw = f.read(max_chars * 4)
+            try:
+                text = head + raw.decode("utf-8")
+            except UnicodeDecodeError:
+                text = head + raw.decode("latin-1")
+    except Exception as e:
+        text = head + "Could not preview (%s: %s). Try run_python." % (type(e).__name__, e)
+    if len(text) > max_chars:
+        text = text[:max_chars] + "\\n... [truncated, %d more characters]" % (len(text) - max_chars)
+    return text
+
+def _repr(o):
+    return repr(o)
+
+def _save_figures():
+    saved = []
+    if "matplotlib.pyplot" in sys.modules:
+        import matplotlib.pyplot as plt
+        for num in plt.get_fignums():
+            i = 1
+            while os.path.exists(os.path.join(WORK, "figure_%d.png" % i)):
+                i += 1
+            name = "figure_%d.png" % i
+            plt.figure(num).savefig(os.path.join(WORK, name), dpi=100, bbox_inches="tight")
+            saved.append(name)
+        plt.close("all")
+    return json.dumps(saved)
+`;
+
+let ns = null;
+async function init() {
+  post({ type: "status", text: "Downloading Python runtime…" });
+  py = await loadPyodide({ indexURL: PYODIDE_URL });
+  py.setStdout({ batched: s => out.push(s) });
+  py.setStderr({ batched: s => out.push("[stderr] " + s) });
+  post({ type: "status", text: "Loading pandas, openpyxl…" });
+  await py.loadPackage(["pandas", "micropip"]);
+  post({ type: "status", text: "Installing openpyxl, python-docx…" });
+  const micropip = py.pyimport("micropip");
+  const failedPkgs = [];
+  for (const pkg of ["openpyxl", "python-docx"]) {
+    try { await micropip.install(pkg); }
+    catch (e) { failedPkgs.push(pkg); post({ type: "log", text: pkg + " install failed: " + e }); }
+  }
+  py.FS.mkdirTree(WORK);
+  py.runPython(`import os; os.environ["MPLBACKEND"]="AGG"; os.chdir("${WORK}")`);
+  ns = py.globals.get("dict")();
+  py.runPython(HELPERS, { globals: ns });
+  post({ type: "ready", failed: failedPkgs });
+}
+function post(m) { self.postMessage(m); }
+function listFiles() { return JSON.parse(ns.get("_list_files")()); }
+
+const handlers = {
+  async run({ code }) {
+    out = [];
+    let result = null, error = null;
+    const before = new Map(listFiles().map(f => [f.path, f.mtime]));
+    try {
+      await py.loadPackagesFromImports(code, { messageCallback: () => {} });
+      const r = await py.runPythonAsync(code, { globals: ns });
+      if (r !== undefined && r !== null) {
+        result = (r && r.toString && r.type) ? ns.get("_repr")(r) : String(r);
+        if (r && r.destroy) r.destroy();
+      }
+    } catch (e) {
+      error = String(e.message || e);
+    }
+    let figs = [];
+    try { figs = JSON.parse(ns.get("_save_figures")()); } catch (e) {}
+    const changed = listFiles().filter(f => before.get(f.path) !== f.mtime).map(f => f.path);
+    return { stdout: out.join("\n"), result, error, changed, figs };
+  },
+  list() { return listFiles(); },
+  preview({ path, max_chars }) { return ns.get("_preview")(path, max_chars || 6000); },
+  write({ path, data }) {
+    const p = ns.get("_safe")(path);
+    py.FS.mkdirTree(p.substring(0, p.lastIndexOf("/")));
+    py.FS.writeFile(p, typeof data === "string" ? data : new Uint8Array(data));
+    return { path, bytes: typeof data === "string" ? data.length : data.byteLength };
+  },
+  read({ path }) { return py.FS.readFile(ns.get("_safe")(path)); },
+  remove({ path }) { py.FS.unlink(ns.get("_safe")(path)); return true; },
+};
+
+self.onmessage = async (ev) => {
+  const { id, cmd, args } = ev.data;
+  try {
+    await ready;
+    const value = await handlers[cmd](args || {});
+    self.postMessage({ id, ok: true, value });
+  } catch (e) {
+    self.postMessage({ id, ok: false, error: String(e.message || e) });
+  }
+};
+const ready = init().catch(e => { post({ type: "fatal", text: String(e.message || e) }); throw e; });
+</script>
+
+<!-- ======================= App ======================= -->
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const TOOL_RESULT_LIMIT = 10000;
+
+// ---------------- Settings ----------------
+const DEFAULTS = {
+  endpoint: "https://lumen.ncsa.illinois.edu/v1", apikey: "", model: "", maxsteps: 15,
+  searchprov: "duckduckgo", searxng: "", readerproxy: "https://r.jina.ai/{url}", corsproxy: "https://corsproxy.io/?url={enc}",
+};
+const HASH_KEYS = { endpoint: "endpoint", key: "apikey", apikey: "apikey", model: "model", maxsteps: "maxsteps", search: "searchprov", searxng: "searxng", reader: "readerproxy", proxy: "corsproxy" };
+const settings = {};
+function lsGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch {} }
+function loadSettings() {
+  for (const k in DEFAULTS) settings[k] = lsGet("acl_" + k) ?? DEFAULTS[k];
+  const params = new URLSearchParams(location.hash.slice(1));
+  let fromLink = false;
+  for (const [hk, sk] of Object.entries(HASH_KEYS)) if (params.has(hk)) { settings[sk] = params.get(hk); lsSet("acl_" + sk, settings[sk]); fromLink = true; }
+  if (fromLink) history.replaceState(null, "", location.pathname); // hide key from the address bar
+  for (const k in DEFAULTS) {
+    $(k).value = settings[k];
+    $(k).addEventListener("change", () => { settings[k] = $(k).value.trim(); lsSet("acl_" + k, settings[k]); });
+  }
+}
+function base() { return (settings.endpoint || DEFAULTS.endpoint).replace(/\/+$/, "").replace(/\/chat\/completions$/, ""); }
+function authHeaders() { return settings.apikey ? { Authorization: "Bearer " + settings.apikey } : {}; }
+
+// ---------------- Python worker ----------------
+let worker, pyReady = false, rpcId = 0, pending = new Map();
+const mirror = new Map(); // files that came from outside (uploads/downloads) -> restored after restart
+function startWorker() {
+  pyReady = false;
+  setPy("Loading Python…", "");
+  const blob = new Blob([$("worker-src").textContent], { type: "text/javascript" });
+  worker = new Worker(URL.createObjectURL(blob));
+  worker.onmessage = ev => {
+    const m = ev.data;
+    if (m.type === "status") return setPy(m.text, "");
+    if (m.type === "log") return console.warn(m.text);
+    if (m.type === "fatal") return setPy("Python failed to load: " + m.text, "err");
+    if (m.type === "ready") {
+      pyReady = true; setPy(m.failed?.length ? "Python ready (could not install: " + m.failed.join(", ") + ")" : "Python ready", m.failed?.length ? "err" : "ready");
+      for (const [path, data] of mirror) rpc("write", { path, data: data.slice(0) });
+      refreshFiles();
+      return;
+    }
+    const p = pending.get(m.id);
+    if (!p) return;
+    pending.delete(m.id);
+    m.ok ? p.resolve(m.value) : p.reject(new Error(m.error));
+  };
+  worker.onerror = e => {
+    setPy("Python worker error: " + e.message + " — click Restart Python", "err");
+    for (const p of pending.values()) p.reject(new Error("Python worker crashed: " + e.message));
+    pending.clear();
+  };
+}
+function rpc(cmd, args, transfer) {
+  return new Promise((resolve, reject) => {
+    const id = ++rpcId;
+    pending.set(id, { resolve, reject });
+    worker.postMessage({ id, cmd, args }, transfer || []);
+  });
+}
+function restartWorker() {
+  worker.terminate();
+  for (const p of pending.values()) p.reject(new Error("Python was restarted"));
+  pending.clear();
+  startWorker();
+}
+function setPy(text, cls) { $("pytext").textContent = text; $("pydot").className = "dot " + cls; }
+
+// ---------------- Files panel ----------------
+function fmtSize(n) { return n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(1) + " KB" : (n / 1048576).toFixed(1) + " MB"; }
+async function refreshFiles() {
+  if (!pyReady) return;
+  const files = await rpc("list");
+  const ul = $("files");
+  ul.innerHTML = files.length ? "" : '<li class="small">No files yet.</li>';
+  for (const f of files) {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="fn" title="${esc(f.path)}">📄 ${esc(f.path)}</span><span class="sz">${fmtSize(f.size)}</span>`;
+    const dl = document.createElement("button"); dl.textContent = "⬇"; dl.title = "Download";
+    dl.onclick = () => downloadFile(f.path);
+    const rm = document.createElement("button"); rm.textContent = "✕"; rm.title = "Delete";
+    rm.onclick = async () => { if (confirm("Delete " + f.path + "?")) { await rpc("remove", { path: f.path }); mirror.delete(f.path); refreshFiles(); } };
+    li.append(dl, rm);
+    ul.append(li);
+  }
+}
+async function downloadFile(path) {
+  const data = await rpc("read", { path });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([data]));
+  a.download = path.split("/").pop();
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+async function addBytes(path, buf) {
+  mirror.set(path, buf.slice(0));
+  await rpc("write", { path, data: buf });
+}
+async function uploadFiles(fileList) {
+  if (!pyReady) { alert("Python is still loading — try again in a moment."); return; }
+  for (const f of fileList) {
+    if (f.size > 100 * 1048576) { note(`${f.name} is too large (${fmtSize(f.size)}); limit is 100 MB.`, true); continue; }
+    await addBytes(f.name, await f.arrayBuffer());
+    note(`Uploaded ${f.name} (${fmtSize(f.size)})`);
+  }
+  refreshFiles();
+}
+
+// ---------------- Tools ----------------
+const TOOLS = [
+  { name: "run_python", description: "Run Python 3 code in the browser (Pyodide). pandas, numpy, openpyxl, python-docx and matplotlib are available (other pure-Python packages load automatically on import, or via `import micropip; await micropip.install('pkg')`). The working directory contains the user's files. Variables persist between calls. Use print() to show results. Matplotlib figures are saved automatically as PNG files. Python code has NO direct internet access: use fetch_url to download.",
+    parameters: { type: "object", properties: { code: { type: "string", description: "Python source code to execute" } }, required: ["code"] } },
+  { name: "list_files", description: "List files in the working folder (name, size in bytes).",
+    parameters: { type: "object", properties: {} } },
+  { name: "read_file", description: "Get a readable preview of a file: Excel → sheets, columns and first rows; Word (.docx) → paragraphs and tables; CSV → columns and first rows; text files → contents.",
+    parameters: { type: "object", properties: { path: { type: "string" }, max_chars: { type: "integer", description: "Maximum characters to return (default 6000)" } }, required: ["path"] } },
+  { name: "write_file", description: "Create or overwrite a text file (e.g. .txt, .md, .csv, .json) in the working folder.",
+    parameters: { type: "object", properties: { path: { type: "string" }, content: { type: "string" } }, required: ["path", "content"] } },
+  { name: "web_search", description: "Search the web. Returns a list of results with title, URL and snippet. Use fetch_url to read a result.",
+    parameters: { type: "object", properties: { query: { type: "string" }, max_results: { type: "integer", description: "default 8" } }, required: ["query"] } },
+  { name: "fetch_url", description: "Download a URL. Web pages are returned as readable text. If save_as is given (or the URL is a data/document file such as .csv, .xlsx, .json, .pdf, .docx), the content is saved into the working folder so Python can use it.",
+    parameters: { type: "object", properties: { url: { type: "string" }, save_as: { type: "string", description: "Optional filename to save into the working folder" } }, required: ["url"] } },
+];
+const TOOL_DEFS = TOOLS.map(t => ({ type: "function", function: t }));
+
+function truncate(s, n = TOOL_RESULT_LIMIT) {
+  s = String(s ?? "");
+  return s.length > n ? s.slice(0, n) + `\n... [truncated ${s.length - n} characters]` : s;
+}
+function proxied(tpl, url) { return tpl.replaceAll("{enc}", encodeURIComponent(url)).replaceAll("{url}", url); }
+
+async function fetchWithFallback(url, { reader = false, signal } = {}) {
+  const attempts = [];
+  if (!reader) attempts.push(["direct", url]);
+  if (reader && settings.readerproxy) attempts.push(["reader proxy", proxied(settings.readerproxy, url)]);
+  if (settings.corsproxy) attempts.push(["CORS proxy", proxied(settings.corsproxy, url)]);
+  if (reader) attempts.push(["direct", url]);
+  const errors = [];
+  for (const [how, u] of attempts) {
+    try {
+      const r = await fetch(u, { signal });
+      if (!r.ok) { errors.push(`${how}: HTTP ${r.status}`); continue; }
+      return { resp: r, how };
+    } catch (e) {
+      if (e.name === "AbortError") throw e;
+      errors.push(`${how}: ${e.message} (probably blocked by CORS)`);
+    }
+  }
+  throw new Error("Could not download " + url + " — " + errors.join("; "));
+}
+
+function htmlToText(html) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  doc.querySelectorAll("script,style,noscript,svg,iframe,nav,footer").forEach(n => n.remove());
+  doc.querySelectorAll("p,div,br,li,tr,h1,h2,h3,h4,h5,h6,section,article,header").forEach(n => n.append("\n"));
+  return (doc.body?.textContent || "").replace(/[ \t\r\f\v]+/g, " ").replace(/ *\n[\s]*/g, "\n").trim();
+}
+
+const executors = {
+  async run_python({ code }, ctx) {
+    if (typeof code !== "string" || !code.trim()) throw new Error("Missing 'code' argument");
+    pythonRunning = true;
+    let r;
+    try { r = await rpc("run", { code }); } finally { pythonRunning = false; }
+    const parts = [];
+    if (r.stdout) parts.push(r.stdout);
+    if (r.result != null) parts.push("Result: " + r.result);
+    if (r.error) parts.push("ERROR:\n" + r.error.split("\n").slice(-25).join("\n"));
+    if (r.changed.length) parts.push("Files created/changed: " + r.changed.join(", "));
+    if (!parts.length) parts.push("(code ran with no output — use print() to show values)");
+    ctx.images = r.changed.filter(p => /\.(png|jpe?g|gif|svg)$/i.test(p));
+    ctx.failed = !!r.error;
+    refreshFiles();
+    return parts.join("\n");
+  },
+  async list_files() {
+    const files = await rpc("list");
+    if (!files.length) return "The working folder is empty.";
+    return files.map(f => `${f.path}\t${f.size} bytes`).join("\n");
+  },
+  async read_file({ path, max_chars }) {
+    if (!path) throw new Error("Missing 'path'");
+    return rpc("preview", { path, max_chars: Math.min(max_chars || 6000, 20000) });
+  },
+  async write_file({ path, content }) {
+    if (!path) throw new Error("Missing 'path'");
+    await rpc("write", { path, data: String(content ?? "") });
+    refreshFiles();
+    return `Wrote ${String(content ?? "").length} characters to ${path}`;
+  },
+  async web_search({ query, max_results }, ctx) {
+    if (!query) throw new Error("Missing 'query'");
+    const n = Math.min(max_results || 8, 20);
+    let results, provider = settings.searchprov;
+    try {
+      results = await search(provider, query, n, ctx.signal);
+      if (!results.length && provider !== "wikipedia") throw new Error("no results");
+    } catch (e) {
+      if (e.name === "AbortError") throw e;
+      if (provider === "wikipedia") throw e;
+      ctx.extraNote = `${provider} search failed (${e.message}); fell back to Wikipedia.`;
+      provider = "wikipedia";
+      results = await search("wikipedia", query, n, ctx.signal);
+    }
+    if (!results.length) return `No results for "${query}".`;
+    return `Search results (${provider}) for "${query}":\n\n` + results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`).join("\n");
+  },
+  async fetch_url({ url, save_as }, ctx) {
+    if (!/^https?:\/\//i.test(url || "")) throw new Error("url must start with http:// or https://");
+    const pathName = new URL(url).pathname;
+    const dataExt = /\.(csv|tsv|xlsx|xls|xlsm|json|pdf|docx|pptx|zip|parquet|txt|png|jpe?g|gif|xml)$/i;
+    const looksData = dataExt.test(pathName);
+    if (save_as || looksData) {
+      const name = (save_as || decodeURIComponent(pathName.split("/").pop()) || "download").replace(/[^\w.\- ]+/g, "_");
+      const { resp, how } = await fetchWithFallback(url, { signal: ctx.signal });
+      const buf = await resp.arrayBuffer();
+      await addBytes(name, buf);
+      refreshFiles();
+      const ctype = resp.headers.get("content-type") || "unknown";
+      let msg = `Saved ${buf.byteLength} bytes to ${name} (content-type: ${ctype}, via ${how}).`;
+      if (/html/i.test(ctype) && !/\.html?$/i.test(name)) msg += " WARNING: the server returned an HTML page, not the expected file.";
+      return msg + " Use read_file or run_python to inspect it.";
+    }
+    const { resp, how } = await fetchWithFallback(url, { reader: true, signal: ctx.signal });
+    const ctype = resp.headers.get("content-type") || "";
+    let text = await resp.text();
+    if (/html/i.test(ctype) || /^\s*<(!doctype|html)/i.test(text)) text = htmlToText(text);
+    return `Content of ${url} (via ${how}):\n\n` + truncate(text, 12000);
+  },
+};
+
+async function search(provider, query, n, signal) {
+  if (provider === "wikipedia") {
+    const u = `https://en.wikipedia.org/w/api.php?action=query&list=search&format=json&origin=*&srlimit=${n}&srsearch=${encodeURIComponent(query)}`;
+    const j = await (await fetch(u, { signal })).json();
+    return (j.query?.search || []).map(s => ({ title: s.title, url: "https://en.wikipedia.org/wiki/" + encodeURIComponent(s.title.replace(/ /g, "_")), snippet: htmlToText(s.snippet) }));
+  }
+  if (provider === "searxng") {
+    if (!settings.searxng) throw new Error("SearXNG URL not set");
+    const u = settings.searxng.replace(/\/+$/, "") + "/search?format=json&q=" + encodeURIComponent(query);
+    const { resp } = await fetchWithFallback(u, { signal });
+    const j = await resp.json();
+    return (j.results || []).slice(0, n).map(r => ({ title: r.title, url: r.url, snippet: r.content || "" }));
+  }
+  // DuckDuckGo HTML endpoint, fetched through a CORS proxy
+  const target = "https://html.duckduckgo.com/html/?q=" + encodeURIComponent(query);
+  const tries = [settings.corsproxy, "https://api.allorigins.win/raw?url={enc}"].filter(Boolean);
+  let lastErr;
+  for (const tpl of tries) {
+    try {
+      const r = await fetch(proxied(tpl, target), { signal });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const doc = new DOMParser().parseFromString(await r.text(), "text/html");
+      const out = [];
+      doc.querySelectorAll(".result").forEach(el => {
+        const a = el.querySelector("a.result__a");
+        if (!a) return;
+        let href = a.getAttribute("href") || "";
+        const m = href.match(/[?&]uddg=([^&]+)/);
+        if (m) href = decodeURIComponent(m[1]);
+        if (href.startsWith("//")) href = "https:" + href;
+        if (!/^https?:/.test(href) || /duckduckgo\.com\/y\.js/.test(href)) return;
+        out.push({ title: a.textContent.trim(), url: href, snippet: el.querySelector(".result__snippet")?.textContent.trim() || "" });
+      });
+      if (out.length) return out.slice(0, n);
+      lastErr = new Error("no results parsed (search may be rate-limited)");
+    } catch (e) { if (e.name === "AbortError") throw e; lastErr = e; }
+  }
+  throw lastErr;
+}
+
+// ---------------- Chat UI ----------------
+const chatEl = $("chat");
+window.DOMPurify?.addHook("afterSanitizeAttributes", n => { if (n.tagName === "A") { n.setAttribute("target", "_blank"); n.setAttribute("rel", "noopener noreferrer"); } });
+function scrollDown() { chatEl.scrollTop = chatEl.scrollHeight; }
+function hideEmpty() { $("empty")?.remove(); }
+function md(text) {
+  try { return DOMPurify.sanitize(marked.parse(text)); } catch { return "<pre>" + esc(text) + "</pre>"; }
+}
+function addMsg(role, text) {
+  hideEmpty();
+  const d = document.createElement("div");
+  d.className = "msg " + role;
+  d.innerHTML = `<div class="who">${role === "user" ? "You" : "Agent"}</div><div class="bubble">${role === "user" ? esc(text).replace(/\n/g, "<br>") : md(text)}</div>`;
+  chatEl.append(d); scrollDown();
+  return d;
+}
+function note(text, isErr) {
+  hideEmpty();
+  const d = document.createElement("div");
+  d.className = "note" + (isErr ? " err" : "");
+  d.textContent = text;
+  chatEl.append(d); scrollDown();
+}
+function addThinking(text) {
+  const d = document.createElement("details");
+  d.className = "think";
+  d.innerHTML = `<summary>💭 Model's reasoning</summary><pre>${esc(text)}</pre>`;
+  chatEl.append(d); scrollDown();
+}
+function briefArgs(name, args) {
+  if (name === "run_python") return (args.code || "").split("\n").find(l => l.trim()) || "";
+  return Object.values(args).map(v => typeof v === "string" ? v : JSON.stringify(v)).join(", ");
+}
+function addToolCard(step, name, args) {
+  const d = document.createElement("details");
+  d.className = "tool";
+  const argHtml = name === "run_python" ? `<pre>${esc(args.code || "")}</pre>` : `<pre>${esc(JSON.stringify(args, null, 2))}</pre>`;
+  d.innerHTML = `<summary><span>🔧</span><span class="name">${esc(name)}</span><span class="brief">${esc(briefArgs(name, args))}</span><span class="st">⏳ running…</span></summary>
+    <div class="body"><div class="label">Step ${step} · the model asked to run</div>${argHtml}<div class="label">Result sent back to the model</div><pre class="res">…</pre></div>`;
+  chatEl.append(d); scrollDown();
+  return d;
+}
+async function finishToolCard(card, result, ms, ok, images) {
+  card.querySelector(".st").textContent = (ok ? "✅ " : "⚠️ ") + (ms / 1000).toFixed(1) + "s";
+  card.querySelector(".res").textContent = result;
+  for (const p of images || []) {
+    try {
+      const data = await rpc("read", { path: p });
+      const img = document.createElement("img");
+      img.src = URL.createObjectURL(new Blob([data], { type: p.endsWith(".svg") ? "image/svg+xml" : "image/png" }));
+      img.alt = p;
+      card.querySelector(".body").append(img);
+      card.open = true;
+    } catch {}
+  }
+  scrollDown();
+}
+
+// ---------------- Agent loop ----------------
+function systemPrompt() {
+  return `You are a helpful data assistant working inside a web browser for a training session.
+You can act by calling tools: run_python (Pyodide with pandas, openpyxl, python-docx, matplotlib), list_files, read_file, write_file, web_search, fetch_url.
+The user's files live in the current working folder (${"/home/pyodide/work"}); use relative filenames.
+Guidelines:
+- Look before you act: use list_files / read_file to understand files before processing them.
+- Do real work with tools instead of guessing. Check tool results; if something fails, read the error and try a fix.
+- Save outputs the user asked for (Excel, CSV, Word, charts) as files in the working folder and tell the user the filenames.
+- Python has no direct internet access; use fetch_url to download data first, then read the saved file in Python.
+- Keep printed output small (e.g. df.head()), not whole large tables.
+- When finished, give a short, clear answer in Markdown. Today's date is ${new Date().toDateString()}.`;
+}
+
+let messages = [];
+let abortCtl = null;
+function resetChat() {
+  messages = [{ role: "system", content: systemPrompt() }];
+  chatEl.innerHTML = "";
+}
+
+function parseArgs(raw) {
+  if (raw && typeof raw === "object") return raw;
+  if (!raw || !String(raw).trim()) return {};
+  try { return JSON.parse(raw); } catch {}
+  // common repair: strip code fences / trailing junk
+  const m = String(raw).match(/\{[\s\S]*\}/);
+  if (m) { try { return JSON.parse(m[0]); } catch {} }
+  throw new Error("Tool arguments were not valid JSON: " + String(raw).slice(0, 300));
+}
+
+// Some models/servers put tool calls in the text instead of the tool_calls field.
+function extractTextToolCalls(content) {
+  if (!content) return [];
+  const found = [];
+  const pushObj = (obj) => {
+    if (!obj || typeof obj !== "object") return;
+    const name = obj.name || obj.function?.name || obj.tool;
+    const args = obj.arguments ?? obj.parameters ?? obj.function?.arguments ?? obj.args ?? {};
+    if (name && TOOLS.some(t => t.name === name)) found.push({ id: "call_txt_" + Math.random().toString(36).slice(2, 10), type: "function", function: { name, arguments: typeof args === "string" ? args : JSON.stringify(args) } });
+  };
+  const tryParse = s => { try { const o = JSON.parse(s.trim()); Array.isArray(o) ? o.forEach(pushObj) : pushObj(o); } catch {} };
+  for (const m of content.matchAll(/<tool_call>([\s\S]*?)<\/tool_call>/g)) tryParse(m[1]);
+  if (!found.length) for (const m of content.matchAll(/```(?:json|tool_call)?\s*([\s\S]*?)```/g)) tryParse(m[1]);
+  return found;
+}
+
+function splitThinking(msg) {
+  let content = msg.content ?? "";
+  if (Array.isArray(content)) content = content.map(c => c.text || "").join("");
+  let thinking = msg.reasoning_content || msg.reasoning || "";
+  content = content.replace(/<think>([\s\S]*?)<\/think>/g, (_, t) => { thinking += t; return ""; }).trim();
+  return { content, thinking: thinking.trim() };
+}
+
+// Keep requests small: shorten old tool results (the most recent 12 messages are sent in full).
+function compactHistory() {
+  const keepFrom = messages.length - 12;
+  return messages.map((m, i) => (m.role === "tool" && i < keepFrom && m.content.length > 1500)
+    ? { ...m, content: m.content.slice(0, 1500) + "\n... [older tool output shortened]" } : m);
+}
+
+async function callModel(signal) {
+  const body = JSON.stringify({ model: settings.model, messages: compactHistory(), tools: TOOL_DEFS, tool_choice: "auto" });
+  let resp, text;
+  for (let attempt = 0; ; attempt++) {
+    resp = await fetch(base() + "/chat/completions", {
+      method: "POST", signal,
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body,
+    });
+    text = await resp.text();
+    if (!(resp.status === 429 || resp.status >= 500) || attempt >= 2) break;
+    $("stepinfo").textContent = `⏳ Server busy (HTTP ${resp.status}), retrying…`;
+    await new Promise((res, rej) => { const t = setTimeout(res, 2000 * (attempt + 1)); signal.addEventListener("abort", () => { clearTimeout(t); rej(new DOMException("Stopped", "AbortError")); }, { once: true }); });
+  }
+  if (!resp.ok) {
+    let detail = text.slice(0, 500);
+    try { const j = JSON.parse(text); detail = j.error?.message || j.detail || j.message || detail; } catch {}
+    const hint = resp.status === 401 ? " — check your API key." : resp.status === 404 ? " — check the endpoint URL and model name." : "";
+    throw new Error(`LLM API error ${resp.status}: ${typeof detail === "string" ? detail : JSON.stringify(detail)}${hint}`);
+  }
+  let j;
+  try { j = JSON.parse(text); } catch { throw new Error("LLM API returned non-JSON: " + text.slice(0, 300)); }
+  const msg = j.choices?.[0]?.message;
+  if (!msg) throw new Error("LLM API returned no message: " + text.slice(0, 300));
+  return { msg, finish: j.choices[0].finish_reason, usage: j.usage };
+}
+
+async function runAgent(userText) {
+  if (!settings.model) { note("Please choose a model in Settings first (click “Load model list”).", true); return; }
+  if (!settings.apikey) note("No API key set — the request will probably be rejected. Enter a key in Settings.", true);
+  addMsg("user", userText);
+  messages.push({ role: "user", content: userText });
+  setBusy(true);
+  abortCtl = new AbortController();
+  const signal = abortCtl.signal;
+  const maxSteps = Math.max(1, parseInt(settings.maxsteps) || 15);
+  let step = 0, tokens = 0;
+  try {
+    while (true) {
+      $("stepinfo").textContent = `🤔 Waiting for the model… (step ${step + 1}, max ${maxSteps} tool steps)`;
+      const { msg, finish, usage } = await callModel(signal);
+      if (usage?.total_tokens) tokens = usage.total_tokens;
+      const { content, thinking } = splitThinking(msg);
+      let toolCalls = Array.isArray(msg.tool_calls) ? msg.tool_calls.filter(tc => tc?.function?.name) : [];
+      let textCalls = false;
+      if (!toolCalls.length) { toolCalls = extractTextToolCalls(content); textCalls = toolCalls.length > 0; }
+      toolCalls.forEach((tc, i) => { if (!tc.id) tc.id = "call_" + step + "_" + i; tc.type = "function"; });
+
+      if (thinking) addThinking(thinking);
+      const assistantMsg = { role: "assistant", content: textCalls ? content.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "").trim() : content };
+      if (toolCalls.length) assistantMsg.tool_calls = toolCalls.map(tc => ({ id: tc.id, type: "function", function: { name: tc.function.name, arguments: typeof tc.function.arguments === "string" ? tc.function.arguments : JSON.stringify(tc.function.arguments ?? {}) } }));
+      messages.push(assistantMsg);
+
+      if (!toolCalls.length) {
+        addMsg("assistant", content || (finish === "length" ? "_(The response was cut off — output length limit reached.)_" : "_(empty response)_"));
+        break;
+      }
+      if (content && !textCalls) addMsg("assistant", content);
+
+      if (step >= maxSteps) {
+        for (const tc of assistantMsg.tool_calls) messages.push({ role: "tool", tool_call_id: tc.id, content: "Not executed: step limit reached." });
+        note(`Stopped after ${maxSteps} tool steps (limit set in Settings). You can say "continue".`, true);
+        break;
+      }
+      for (const tc of assistantMsg.tool_calls) {
+        step++;
+        const name = tc.function.name;
+        let args = {}, result, ok = true;
+        const ctx = { signal };
+        const t0 = performance.now();
+        let card;
+        try {
+          args = parseArgs(tc.function.arguments);
+          card = addToolCard(step, name, args);
+          $("stepinfo").textContent = `🔧 Running ${name}… (step ${step})`;
+          if (!executors[name]) throw new Error(`Unknown tool '${name}'. Available: ${TOOLS.map(t => t.name).join(", ")}`);
+          result = await executors[name](args, ctx);
+          if (ctx.failed) ok = false;
+          if (ctx.extraNote) result = ctx.extraNote + "\n" + result;
+        } catch (e) {
+          if (e.name === "AbortError" || signal.aborted) throw e;
+          ok = false;
+          result = "ERROR: " + e.message;
+          if (!card) card = addToolCard(step, name, { raw_arguments: tc.function.arguments });
+        }
+        result = truncate(result);
+        await finishToolCard(card, result, performance.now() - t0, ok, ctx.images);
+        messages.push({ role: "tool", tool_call_id: tc.id, content: result });
+        if (signal.aborted) throw new DOMException("Stopped", "AbortError");
+      }
+    }
+  } catch (e) {
+    if (e.name === "AbortError" || signal.aborted) note("⏹ Stopped by user.");
+    else {
+      let m = e.message;
+      if (e instanceof TypeError && /fetch/i.test(m)) m += " — network or CORS problem reaching " + base() + ". Browsers can only call APIs that allow cross-origin requests; set the API endpoint to a CORS proxy (see README).";
+      note("⚠️ " + m, true);
+    }
+    // keep the conversation valid: every tool_call needs a tool response
+    const last = messages[messages.length - 1];
+    const lastAsst = [...messages].reverse().find(m => m.role === "assistant");
+    if (lastAsst?.tool_calls) {
+      const answered = new Set(messages.filter(m => m.role === "tool").map(m => m.tool_call_id));
+      for (const tc of lastAsst.tool_calls) if (!answered.has(tc.id)) messages.push({ role: "tool", tool_call_id: tc.id, content: "Interrupted." });
+    } else if (last?.role === "user") {
+      messages.pop(); // failed before the model answered; allow retry
+    }
+  } finally {
+    setBusy(false);
+    $("stepinfo").textContent = step ? `Done — ${step} tool step${step > 1 ? "s" : ""}${tokens ? `, ${tokens.toLocaleString()} tokens in last request` : ""}.` : (tokens ? `${tokens.toLocaleString()} tokens.` : "");
+    refreshFiles();
+  }
+}
+
+let busy = false, pythonRunning = false;
+function setBusy(b) {
+  busy = b;
+  $("send").hidden = b; $("stop").hidden = !b;
+  $("input").disabled = false;
+}
+
+// ---------------- Wiring ----------------
+const CHIPS = [
+  ["What files do I have?", "List my files and briefly describe what is in each one."],
+  ["Summarize spreadsheet", "Summarize the Excel spreadsheet: what columns it has, key statistics, and anything notable."],
+  ["Make a chart", "Make a bar chart from the spreadsheet data that shows the most interesting comparison, and explain it."],
+  ["Word → Excel", "Extract the tables from the Word document into an Excel file with one sheet per table."],
+  ["Web research", "Search the web for the population of the 5 largest cities in Illinois, save them to illinois_cities.csv and show the table."],
+  ["Download data", "Download https://raw.githubusercontent.com/mwaskom/seaborn-data/master/penguins.csv and tell me the average body mass per species."],
+];
+function initChips() {
+  for (const [label, text] of CHIPS) {
+    const b = document.createElement("button");
+    b.className = "chip"; b.textContent = label; b.title = text;
+    b.onclick = () => { $("input").value = text; $("input").focus(); };
+    $("chips").append(b);
+  }
+}
+function send() {
+  if (busy) return;
+  const text = $("input").value.trim();
+  if (!text) return;
+  if (!pyReady) { note("Python is still loading — please wait a few seconds.", true); return; }
+  $("input").value = "";
+  runAgent(text);
+}
+
+const SAMPLE_CODE = `
+import pandas as pd, numpy as np, docx
+rng = np.random.default_rng(42)
+regions = ["North", "South", "East", "West"]
+products = ["Widget", "Gadget", "Gizmo"]
+rows = []
+for m in pd.date_range("2025-01-01", periods=12, freq="MS"):
+    for r in regions:
+        for p in products:
+            units = int(rng.integers(20, 200))
+            price = {"Widget": 12.5, "Gadget": 30.0, "Gizmo": 7.25}[p]
+            rows.append({"Month": m.strftime("%Y-%m"), "Region": r, "Product": p, "Units": units, "Revenue": round(units * price, 2)})
+df = pd.DataFrame(rows)
+staff = pd.DataFrame({"Name": ["Ana", "Ben", "Chen", "Dee", "Eli"], "Region": ["North", "South", "East", "West", "North"], "Target": [9000, 8000, 8500, 7000, 6000]})
+with pd.ExcelWriter("sales_2025.xlsx") as xw:
+    df.to_excel(xw, sheet_name="Sales", index=False)
+    staff.to_excel(xw, sheet_name="Staff", index=False)
+d = docx.Document()
+d.add_heading("Quarterly Planning Memo", 1)
+d.add_paragraph("This memo lists the budget requests from each department for next quarter, and the project milestones.")
+t = d.add_table(rows=1, cols=3)
+t.rows[0].cells[0].text, t.rows[0].cells[1].text, t.rows[0].cells[2].text = "Department", "Request ($)", "Priority"
+for dep, amt, pr in [("Marketing", "12000", "High"), ("IT", "30500", "Medium"), ("HR", "4200", "Low"), ("Operations", "18750", "High")]:
+    c = t.add_row().cells; c[0].text, c[1].text, c[2].text = dep, amt, pr
+d.add_paragraph("Milestones:")
+t2 = d.add_table(rows=1, cols=2)
+t2.rows[0].cells[0].text, t2.rows[0].cells[1].text = "Milestone", "Due"
+for a, b in [("Kickoff", "2025-10-01"), ("Beta", "2025-11-15"), ("Launch", "2026-01-10")]:
+    c = t2.add_row().cells; c[0].text, c[1].text = a, b
+d.save("planning_memo.docx")
+print("ok")
+`;
+
+function init() {
+  loadSettings();
+  initChips();
+  resetChat();
+  startWorker();
+  $("send").onclick = send;
+  $("stop").onclick = () => {
+    abortCtl?.abort();
+    if (pythonRunning) { restartWorker(); note("Python was running, so it was restarted (variables cleared; uploaded/downloaded files restored)."); }
+  };
+  $("input").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
+  const drop = $("drop");
+  drop.onclick = () => $("fileinput").click();
+  $("fileinput").onchange = e => { uploadFiles(e.target.files); e.target.value = ""; };
+  drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", e => { e.preventDefault(); drop.classList.remove("over"); uploadFiles(e.dataTransfer.files); });
+  $("refresh").onclick = refreshFiles;
+  $("sample").onclick = async () => {
+    if (!pyReady) return alert("Python is still loading.");
+    $("sample").disabled = true;
+    try {
+      const r = await rpc("run", { code: SAMPLE_CODE });
+      if (r.error) throw new Error(r.error);
+      for (const p of ["sales_2025.xlsx", "planning_memo.docx"]) { const data = await rpc("read", { path: p }); mirror.set(p, data.buffer.slice(0)); }
+      note("Created sample files: sales_2025.xlsx and planning_memo.docx");
+    } catch (e) { note("Could not create sample: " + e.message, true); }
+    $("sample").disabled = false;
+    refreshFiles();
+  };
+  $("clear").onclick = () => { if (!busy) { resetChat(); $("stepinfo").textContent = ""; } };
+  $("restartpy").onclick = () => { if (busy) abortCtl?.abort(); restartWorker(); note("Python restarted (variables cleared; uploaded and downloaded files restored)."); };
+  $("showraw").onclick = () => { $("rawpre").textContent = JSON.stringify({ model: settings.model, tools: TOOL_DEFS, messages }, null, 2); $("rawdlg").showModal(); };
+  $("closeraw").onclick = () => $("rawdlg").close();
+  $("loadmodels").onclick = async () => {
+    try {
+      const r = await fetch(base() + "/models", { headers: authHeaders() });
+      if (!r.ok) throw new Error("HTTP " + r.status + (r.status === 401 ? " (check API key)" : ""));
+      const j = await r.json();
+      const ids = (j.data || []).map(m => m.id).sort();
+      $("modellist").innerHTML = ids.map(id => `<option value="${esc(id)}">`).join("");
+      note(`Found ${ids.length} models: ${ids.join(", ")}`);
+      if (!settings.model && ids.length) { $("model").value = ids[0]; $("model").dispatchEvent(new Event("change")); }
+    } catch (e) { note("Could not load models: " + e.message + (e instanceof TypeError ? " (network/CORS problem)" : ""), true); }
+  };
+  $("sharelink").onclick = async () => {
+    const p = new URLSearchParams();
+    if (settings.endpoint && settings.endpoint !== DEFAULTS.endpoint) p.set("endpoint", settings.endpoint);
+    if (settings.apikey) p.set("key", settings.apikey);
+    if (settings.model) p.set("model", settings.model);
+    const link = location.origin + location.pathname + "#" + p.toString();
+    try { await navigator.clipboard.writeText(link); note("Setup link copied to clipboard (contains the API key — share carefully)."); }
+    catch { prompt("Copy this link:", link); }
+  };
+}
+init();
+</script>
+</body>
+</html>
