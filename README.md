@@ -45,5 +45,6 @@ text (`<tool_call>{...}</tool_call>` or fenced JSON) are also recognised.
   fallback, restart) and live runs against Lumen `glm-5.3-flash`.
 
 ## Tests
-`cd tests && npm i && npx playwright install chromium && npm test` (mock LLM).
+`cd tests && npm i && npx playwright install chromium && npm test` (mock LLM + axe-core WCAG 2.1 AA scan,
+320px reflow, keyboard focus checks).
 Live: run `python3 proxy/local_proxy.py`, then `LUMEN_API_KEY=... node live.mjs glm-5.3-flash`.

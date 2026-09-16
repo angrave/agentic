@@ -49,6 +49,7 @@ await page.waitForFunction(() => document.getElementById("pytext").textContent =
 console.log("Python ready in", (Date.now() - t0) / 1000, "s");
 await page.click("#sample");
 await page.waitForFunction(() => document.getElementById("files").textContent.includes("planning_memo.docx"), null, { timeout: 60000 });
+await page.click("#settings > summary");
 await page.click("#loadmodels");
 await page.fill("#input", "Analyze my files");
 await page.press("#input", "Enter");

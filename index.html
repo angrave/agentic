@@ -8,7 +8,7 @@
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
 <style>
   :root {
-    --bg: #f6f7f9; --panel: #fff; --ink: #1d2330; --muted: #677084; --line: #dfe3ea;
+    --bg: #f6f7f9; --panel: #fff; --ink: #1d2330; --muted: #5a6275; --line: #dfe3ea; --ctl: #7d8697;
     --accent: #1f5fbf; --accent-soft: #e8f0fc; --ok: #1d7a46; --err: #b3261e; --tool: #7a4fb8; --tool-soft: #f3eefb;
     --code: #f2f4f7;
   }
@@ -22,9 +22,9 @@
   .dot { width: 9px; height: 9px; border-radius: 50%; background: #c9a227; display: inline-block; }
   .dot.ready { background: var(--ok); } .dot.err { background: var(--err); }
   main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; height: calc(100% - 50px); }
-  @media (max-width: 860px) { main { grid-template-columns: 1fr; height: auto; } #side { border-left: 0; border-top: 1px solid var(--line); } #chatcol { height: 80vh; } }
+  @media (max-width: 860px) { main { grid-template-columns: minmax(0, 1fr); height: auto; } #pystatus { margin-left: 0; } #side { border-left: 0; border-top: 1px solid var(--line); } #chatcol { height: 80vh; } }
   #chatcol { display: flex; flex-direction: column; min-height: 0; }
-  #chat { flex: 1; overflow-y: auto; padding: 16px 20px; }
+  #chat { flex: 1; overflow-y: auto; padding: 16px 20px; overflow-wrap: anywhere; }
   #side { border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; padding: 12px 14px; }
   .msg { max-width: 900px; margin: 0 auto 12px; }
   .bubble { padding: 10px 14px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); overflow-x: auto; }
@@ -51,15 +51,16 @@
   #chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
   .chip { border: 1px solid var(--line); background: var(--bg); border-radius: 999px; padding: 3px 10px; font-size: 12.5px; cursor: pointer; color: var(--ink); }
   .chip:hover { border-color: var(--accent); color: var(--accent); }
-  #inputrow { display: flex; gap: 8px; align-items: flex-end; }
-  textarea { flex: 1; resize: vertical; min-height: 46px; max-height: 240px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+  #inputrow { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+  textarea { flex: 1 1 200px; min-width: 0; resize: vertical; min-height: 46px; max-height: 240px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
   button { font: inherit; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); padding: 6px 12px; cursor: pointer; color: var(--ink); }
   button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
   button.danger { color: var(--err); }
   button:disabled { opacity: .5; cursor: default; }
   #stepinfo { font-size: 12px; color: var(--muted); margin-top: 6px; min-height: 18px; }
-  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 14px 0 6px; }
-  h2:first-child { margin-top: 0; }
+  #side h2, #settings summary h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 14px 0 6px; }
+  #side h2:first-child { margin-top: 0; }
+  .bubble h4, .bubble h5, .bubble h6 { font-size: 15px; margin: 10px 0 4px; }
   #drop { border: 2px dashed var(--line); border-radius: 8px; padding: 12px; text-align: center; color: var(--muted); font-size: 13px; cursor: pointer; }
   #drop.over { border-color: var(--accent); background: var(--accent-soft); }
   #files { list-style: none; padding: 0; margin: 8px 0; }
@@ -76,74 +77,100 @@
   #rawdlg .top { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); }
   #rawdlg pre { flex: 1; margin: 0; border-radius: 0; overflow: auto; white-space: pre-wrap; }
   .empty { max-width: 640px; margin: 40px auto; color: var(--muted); }
-  .empty h3 { color: var(--ink); margin-bottom: 4px; }
+  .empty h2 { color: var(--ink); margin-bottom: 4px; font-size: 17px; text-transform: none; letter-spacing: 0; }
+  /* Accessibility helpers */
+  .sr-only { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  .skip { position: absolute; left: 8px; top: -40px; background: var(--accent); color: #fff; padding: 6px 10px; border-radius: 6px; z-index: 10; }
+  .skip:focus { top: 8px; }
+  :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  textarea, button, .chip, label.f input, label.f select { border-color: var(--ctl); }
+  #settings > summary { cursor: pointer; margin: 14px 0 6px; }
+  #settings > summary h2 { display: inline; margin: 0; }
+  #drop { width: 100%; font: inherit; background: transparent; }
+  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
 </style>
 </head>
 <body>
+<a class="skip" href="#input">Skip to message box</a>
 <header>
-  <h1>🧪 Agentic Chat Lab</h1>
-  <span class="sub">An AI agent with Python, files &amp; the web — running in your browser</span>
-  <span id="pystatus"><span class="dot" id="pydot"></span><span id="pytext">Loading Python…</span></span>
+  <h1><span aria-hidden="true">🧪 </span>Agentic Chat Lab</h1>
+  <p class="sub" style="margin:0">An AI agent with Python, files &amp; the web — running in your browser</p>
+  <p id="pystatus" role="status" style="margin-block:0"><span class="dot" id="pydot" aria-hidden="true"></span><span id="pytext">Loading Python…</span></p>
 </header>
 <main>
-  <section id="chatcol">
+  <section id="chatcol" aria-labelledby="chat-heading">
+    <h2 id="chat-heading" class="sr-only">Chat with the agent</h2>
     <div id="chat">
       <div class="empty" id="empty">
-        <h3>How this works</h3>
+        <h2>How this works</h2>
         <p>You chat with a large language model. It can't touch your computer directly — instead it asks to use <b>tools</b>:
           run Python (with pandas), list/read/write files, search the web, and download pages or data.
           Your browser runs each tool and sends the result back. The model repeats this <i>think → act → observe</i>
           loop until it can answer. Every step is shown below as a purple card you can open.</p>
-        <p>1. Enter your API key under <b>Settings</b> (right). 2. Upload an Excel, Word or CSV file (or make a sample). 3. Ask for something.</p>
+        <ol>
+          <li>If you did not get a setup link, open <b>Settings</b> and enter the API key and model.</li>
+          <li>Upload an Excel, Word or CSV file (or make sample data).</li>
+          <li>Ask for something.</li>
+        </ol>
       </div>
     </div>
     <div id="composer">
-      <div id="chips"></div>
+      <div id="chips" role="group" aria-label="Example requests (fills the message box)"></div>
       <div id="inputrow">
-        <textarea id="input" placeholder="Ask the agent to do something… (Enter to send, Shift+Enter for new line)"></textarea>
+        <label for="input" class="sr-only">Message to the agent</label>
+        <textarea id="input" aria-describedby="input-hint" placeholder="Ask the agent to do something…"></textarea>
+        <span id="input-hint" class="sr-only">Press Enter to send, Shift+Enter for a new line.</span>
         <button class="primary" id="send">Send</button>
         <button class="danger" id="stop" hidden>Stop</button>
       </div>
-      <div id="stepinfo"></div>
+      <p id="stepinfo" role="status" style="margin-bottom:0"></p>
+      <div id="announcer" class="sr-only" aria-live="polite"></div>
     </div>
   </section>
-  <aside id="side">
-    <h2>Files <span class="small">(virtual, in-browser)</span></h2>
-    <div id="drop">Drop files here or <u>click to upload</u><br><span class="small">Excel, Word, CSV, text, PDF…</span></div>
-    <input type="file" id="fileinput" multiple hidden>
-    <ul id="files"></ul>
-    <div class="row">
-      <button id="sample">Make sample data</button>
-      <button id="refresh">Refresh</button>
-    </div>
-    <h2>Conversation</h2>
-    <div class="row">
-      <button id="showraw">Show raw messages</button>
-      <button id="clear">New chat</button>
-      <button id="restartpy" title="Restart Python (uploaded/downloaded files are restored)">Restart Python</button>
-    </div>
-    <h2>Settings</h2>
-    <label class="f">API endpoint (OpenAI-compatible)<input id="endpoint" placeholder="https://lumen.ncsa.illinois.edu/v1"></label>
-    <label class="f">API key<input id="apikey" type="password" autocomplete="off" placeholder="sk-…"></label>
-    <label class="f">Model<input id="model" list="modellist" placeholder="e.g. glm-5.3-flash"><datalist id="modellist"></datalist></label>
-    <div class="row"><button id="loadmodels">Load model list</button><button id="sharelink" title="Copy a link containing these settings">Copy setup link</button></div>
-    <label class="f">Max tool steps per request<input id="maxsteps" type="number" min="1" max="50"></label>
-    <label class="f">Web search provider
-      <select id="searchprov">
-        <option value="duckduckgo">DuckDuckGo (via reader proxy)</option>
-        <option value="wikipedia">Wikipedia (no proxy needed)</option>
-        <option value="searxng">SearXNG instance (URL below)</option>
-      </select>
-    </label>
-    <label class="f">SearXNG URL (optional)<input id="searxng" placeholder="https://searx.example.org"></label>
-    <label class="f">Reader proxy (web pages → text)<input id="readerproxy" placeholder="https://r.jina.ai/{url}"></label>
-    <label class="f">CORS proxy (raw downloads)<input id="corsproxy" placeholder="https://corsproxy.io/?url={enc}"></label>
-    <p class="small">Settings are stored only in this browser. <code>{url}</code> = raw URL, <code>{enc}</code> = URL-encoded. A setup link puts settings after <code>#</code>, which is never sent to the web server — but anyone with the link can use the key.</p>
+  <aside id="side" aria-label="Files and settings">
+    <section aria-labelledby="files-heading">
+      <h2 id="files-heading">Files <span class="small">(virtual, in-browser)</span></h2>
+      <button type="button" id="drop" aria-describedby="drop-hint">Drop files here or <u>choose files to upload</u><br><span class="small" id="drop-hint">Excel, Word, CSV, text, PDF…</span></button>
+      <input type="file" id="fileinput" multiple hidden>
+      <ul id="files" aria-label="Files in the working folder"></ul>
+      <div class="row">
+        <button id="sample">Make sample data</button>
+        <button id="refresh">Refresh file list</button>
+      </div>
+    </section>
+    <section aria-labelledby="conv-heading">
+      <h2 id="conv-heading">Conversation</h2>
+      <div class="row">
+        <button id="showraw">Show raw messages</button>
+        <button id="clear">New chat</button>
+        <button id="restartpy" aria-describedby="restart-hint">Restart Python</button>
+      </div>
+      <p id="restart-hint" class="small">Restarting clears Python variables; uploaded and downloaded files are restored.</p>
+    </section>
+    <details id="settings">
+      <summary><h2>Settings</h2></summary>
+      <label class="f">API endpoint (OpenAI-compatible)<input id="endpoint" type="url" autocomplete="url" placeholder="https://lumen.ncsa.illinois.edu/v1"></label>
+      <label class="f">API key<input id="apikey" type="password" autocomplete="off" placeholder="sk-…"></label>
+      <label class="f">Model<input id="model" list="modellist" autocomplete="off" placeholder="e.g. glm-5.3-flash"><datalist id="modellist"></datalist></label>
+      <div class="row"><button id="loadmodels">Load model list</button><button id="sharelink" aria-describedby="settings-hint">Copy setup link</button></div>
+      <label class="f">Max tool steps per request<input id="maxsteps" type="number" min="1" max="50"></label>
+      <label class="f">Web search provider
+        <select id="searchprov">
+          <option value="duckduckgo">DuckDuckGo (via reader proxy)</option>
+          <option value="wikipedia">Wikipedia (no proxy needed)</option>
+          <option value="searxng">SearXNG instance (URL below)</option>
+        </select>
+      </label>
+      <label class="f">SearXNG URL (optional)<input id="searxng" type="url" placeholder="https://searx.example.org"></label>
+      <label class="f">Reader proxy (web pages → text)<input id="readerproxy" placeholder="https://r.jina.ai/{url}"></label>
+      <label class="f">CORS proxy (raw downloads)<input id="corsproxy" placeholder="https://corsproxy.io/?url={enc}"></label>
+      <p class="small" id="settings-hint">Settings are stored only in this browser. <code>{url}</code> = raw URL, <code>{enc}</code> = URL-encoded. A setup link puts settings after <code>#</code>, which is never sent to the web server — but anyone with the link can use the key.</p>
+    </details>
   </aside>
 </main>
-<dialog id="rawdlg"><div class="inner">
-  <div class="top"><b>Raw messages sent to the model (this is all the model "sees")</b><button id="closeraw">Close</button></div>
-  <pre id="rawpre"></pre>
+<dialog id="rawdlg" aria-labelledby="rawdlg-title"><div class="inner">
+  <div class="top"><h2 id="rawdlg-title" style="margin:0;font-size:15px;text-transform:none;letter-spacing:0;color:var(--ink)">Raw messages sent to the model (this is all the model "sees")</h2><button id="closeraw">Close</button></div>
+  <pre id="rawpre" tabindex="0" aria-labelledby="rawdlg-title"></pre>
 </div></dialog>
 
 <!-- ======================= Python worker ======================= -->
@@ -391,10 +418,10 @@ async function refreshFiles() {
   ul.innerHTML = files.length ? "" : '<li class="small">No files yet.</li>';
   for (const f of files) {
     const li = document.createElement("li");
-    li.innerHTML = `<span class="fn" title="${esc(f.path)}">📄 ${esc(f.path)}</span><span class="sz">${fmtSize(f.size)}</span>`;
-    const dl = document.createElement("button"); dl.textContent = "⬇"; dl.title = "Download";
+    li.innerHTML = `<span class="fn" title="${esc(f.path)}"><span aria-hidden="true">📄 </span>${esc(f.path)}</span><span class="sz">${fmtSize(f.size)}</span>`;
+    const dl = document.createElement("button"); dl.textContent = "⬇"; dl.title = "Download"; dl.setAttribute("aria-label", "Download " + f.path);
     dl.onclick = () => downloadFile(f.path);
-    const rm = document.createElement("button"); rm.textContent = "✕"; rm.title = "Delete";
+    const rm = document.createElement("button"); rm.textContent = "✕"; rm.title = "Delete"; rm.setAttribute("aria-label", "Delete " + f.path);
     rm.onclick = async () => { if (confirm("Delete " + f.path + "?")) { await rpc("remove", { path: f.path }); mirror.delete(f.path); refreshFiles(); } };
     li.append(dl, rm);
     ul.append(li);
@@ -587,31 +614,45 @@ async function search(provider, query, n, signal) {
 
 // ---------------- Chat UI ----------------
 const chatEl = $("chat");
+const INTRO_HTML = chatEl.innerHTML;
 window.DOMPurify?.addHook("afterSanitizeAttributes", n => { if (n.tagName === "A") { n.setAttribute("target", "_blank"); n.setAttribute("rel", "noopener noreferrer"); } });
 function scrollDown() { chatEl.scrollTop = chatEl.scrollHeight; }
 function hideEmpty() { $("empty")?.remove(); }
 function md(text) {
-  try { return DOMPurify.sanitize(marked.parse(text)); } catch { return "<pre>" + esc(text) + "</pre>"; }
+  // model headings become h4-h6 so they sit below the "You"/"Agent" h3 in the page outline
+  try {
+    const html = DOMPurify.sanitize(marked.parse(text));
+    const levels = [...html.matchAll(/<h([1-6])\b/g)].map(m => +m[1]);
+    const shift = levels.length ? 4 - Math.min(...levels) : 0;
+    return html.replace(/<(\/?)h([1-6])\b/g, (_, sl, n) => `<${sl}h${Math.min(6, +n + shift)}`);
+  } catch { return "<pre>" + esc(text) + "</pre>"; }
 }
 function addMsg(role, text) {
   hideEmpty();
   const d = document.createElement("div");
   d.className = "msg " + role;
-  d.innerHTML = `<div class="who">${role === "user" ? "You" : "Agent"}</div><div class="bubble">${role === "user" ? esc(text).replace(/\n/g, "<br>") : md(text)}</div>`;
+  d.innerHTML = `<h3 class="who">${role === "user" ? "You" : "Agent"}</h3><div class="bubble">${role === "user" ? esc(text).replace(/\n/g, "<br>") : md(text)}</div>`;
   chatEl.append(d); scrollDown();
+  if (role !== "user") announce("Agent replied: " + d.querySelector(".bubble").textContent.slice(0, 400));
   return d;
 }
 function note(text, isErr) {
   hideEmpty();
   const d = document.createElement("div");
   d.className = "note" + (isErr ? " err" : "");
+  if (isErr) d.setAttribute("role", "alert");
   d.textContent = text;
   chatEl.append(d); scrollDown();
+}
+function announce(text) {
+  const a = $("announcer");
+  a.textContent = "";
+  setTimeout(() => { a.textContent = text; }, 50); // re-set so repeated messages are announced
 }
 function addThinking(text) {
   const d = document.createElement("details");
   d.className = "think";
-  d.innerHTML = `<summary>💭 Model's reasoning</summary><pre>${esc(text)}</pre>`;
+  d.innerHTML = `<summary><span aria-hidden="true">💭 </span>Model's reasoning</summary><pre>${esc(text)}</pre>`;
   chatEl.append(d); scrollDown();
 }
 function briefArgs(name, args) {
@@ -622,20 +663,20 @@ function addToolCard(step, name, args) {
   const d = document.createElement("details");
   d.className = "tool";
   const argHtml = name === "run_python" ? `<pre>${esc(args.code || "")}</pre>` : `<pre>${esc(JSON.stringify(args, null, 2))}</pre>`;
-  d.innerHTML = `<summary><span>🔧</span><span class="name">${esc(name)}</span><span class="brief">${esc(briefArgs(name, args))}</span><span class="st">⏳ running…</span></summary>
+  d.innerHTML = `<summary><span aria-hidden="true">🔧</span><span class="sr-only">Tool call, step ${step}: </span><span class="name">${esc(name)}</span><span class="brief">${esc(briefArgs(name, args))}</span><span class="st"><span aria-hidden="true">⏳ </span>running…</span></summary>
     <div class="body"><div class="label">Step ${step} · the model asked to run</div>${argHtml}<div class="label">Result sent back to the model</div><pre class="res">…</pre></div>`;
   chatEl.append(d); scrollDown();
   return d;
 }
 async function finishToolCard(card, result, ms, ok, images) {
-  card.querySelector(".st").textContent = (ok ? "✅ " : "⚠️ ") + (ms / 1000).toFixed(1) + "s";
+  card.querySelector(".st").innerHTML = `<span aria-hidden="true">${ok ? "✅" : "⚠️"} </span><span class="sr-only">${ok ? "succeeded" : "had an error"}, </span>${(ms / 1000).toFixed(1)}s`;
   card.querySelector(".res").textContent = result;
   for (const p of images || []) {
     try {
       const data = await rpc("read", { path: p });
       const img = document.createElement("img");
       img.src = URL.createObjectURL(new Blob([data], { type: p.endsWith(".svg") ? "image/svg+xml" : "image/png" }));
-      img.alt = p;
+      img.alt = `Image ${p} created by Python`;
       card.querySelector(".body").append(img);
       card.open = true;
     } catch {}
@@ -661,7 +702,7 @@ let messages = [];
 let abortCtl = null;
 function resetChat() {
   messages = [{ role: "system", content: systemPrompt() }];
-  chatEl.innerHTML = "";
+  chatEl.innerHTML = INTRO_HTML;
 }
 
 function parseArgs(raw) {
@@ -733,6 +774,10 @@ async function callModel(signal) {
 }
 
 async function runAgent(userText) {
+  if (!settings.model || !settings.apikey) {
+    $("settings").open = true;
+    $(settings.apikey ? "model" : "apikey").focus();
+  }
   if (!settings.model) { note("Please choose a model in Settings first (click “Load model list”).", true); return; }
   if (!settings.apikey) note("No API key set — the request will probably be rejected. Enter a key in Settings.", true);
   addMsg("user", userText);
@@ -822,7 +867,9 @@ async function runAgent(userText) {
 let busy = false, pythonRunning = false;
 function setBusy(b) {
   busy = b;
+  const hadFocus = document.activeElement === $(b ? "send" : "stop");
   $("send").hidden = b; $("stop").hidden = !b;
+  if (hadFocus) $(b ? "stop" : "input").focus(); // don't lose keyboard focus when the button disappears
   $("input").disabled = false;
 }
 

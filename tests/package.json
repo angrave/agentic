@@ -1,5 +1,5 @@
 {
   "type": "module",
-  "scripts": { "test": "node e2e.mjs && node stop.mjs" },
-  "devDependencies": { "playwright": "*" }
+  "scripts": { "test": "node e2e.mjs && node stop.mjs && node a11y.mjs" },
+  "devDependencies": { "playwright": "*", "@axe-core/playwright": "*" }
 }
