@@ -245,7 +245,7 @@ async function init() {
   py.setStdout({ batched: s => out.push(s) });
   py.setStderr({ batched: s => out.push("[stderr] " + s) });
   post({ type: "status", text: "Loading pandas, openpyxl…" });
-  await py.loadPackage(["pandas", "micropip"]);
+  await py.loadPackage(["pandas", "micropip", "Pillow"]); // Pillow before openpyxl so it can embed images
   post({ type: "status", text: "Installing openpyxl, python-docx…" });
   const micropip = py.pyimport("micropip");
   const failedPkgs = [];

@@ -19,6 +19,8 @@ fetches, which affects web search and downloads. Options:
 2. **GitHub Pages for attendees:** deploy `proxy/cloudflare-worker.js` as a free Cloudflare
    Worker (edit `ALLOWED_ORIGINS`), then use a setup link such as
    `https://angrave.github.io/agentic/#endpoint=https://NAME.workers.dev/v1&proxy=https://NAME.workers.dev/proxy%3Furl%3D%7Benc%7D&reader=https://NAME.workers.dev/proxy%3Furl%3D%7Benc%7D&model=glm-5.3-flash&key=KEY`
+   **Deployed:** `https://agentic-proxy.angrave.workers.dev` (tested with Lumen, search and downloads). Setup link (add `&key=...`):
+   `https://angrave.github.io/agentic/#endpoint=https://agentic-proxy.angrave.workers.dev/v1&proxy=https://agentic-proxy.angrave.workers.dev/proxy%3Furl%3D%7Benc%7D&reader=https://agentic-proxy.angrave.workers.dev/proxy%3Furl%3D%7Benc%7D&model=glm-5.3-flash`
 3. Ask NCSA to enable CORS on Lumen for your Pages origin — then no API proxy is needed.
 
 Without an own proxy the page falls back to public proxies (`r.jina.ai`, `corsproxy.io`,
