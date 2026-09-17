@@ -2,7 +2,7 @@
 
 Scope: items 2 (authentication) and 3 (per-user quotas) from `auth-howto.md`, built into the
 `agentic-auth` Worker, which becomes the **only** way the app reaches Lumen and the web proxy.
-Status: plan, not implemented. Target: the next training event.
+Status: **implemented** (2026-09-17): `auth/worker.js`, `auth/limiter.js`, gateway mode in `index.html`. Tests: `tests/limits.mjs`, `tests/integration.mjs`, `tests/gateway-app.mjs`.
 **Section 8 (changes after the GLM review) overrides earlier sections where they differ.**
 
 ## 0. Goals and non-goals

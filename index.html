@@ -87,6 +87,16 @@
   #settings > summary { cursor: pointer; margin: 14px 0 6px; }
   #settings > summary h2 { display: inline; margin: 0; }
   #drop { width: 100%; font: inherit; background: transparent; }
+  #gwstatus[hidden] { display: none; }
+  #gwstatus { font-size: 12.5px; color: var(--muted); margin-block: 0; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  #gwstatus button { padding: 2px 8px; font-size: 12.5px; }
+  #signindlg { width: min(460px, 92vw); border: 1px solid var(--line); border-radius: 10px; padding: 20px; color: var(--ink); }
+  #signindlg h2 { margin: 0 0 6px; font-size: 18px; }
+  #signindlg form { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+  #signindlg input { font: inherit; padding: 7px 9px; border: 1px solid var(--ctl); border-radius: 6px; }
+  #signin-error { color: var(--err); margin: 8px 0 0; }
+  #signin-error:empty { display: none; }
+  #signin-providers { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
   @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
 </style>
 </head>
@@ -96,6 +106,7 @@
   <h1><span aria-hidden="true">🧪 </span>Agentic Chat Lab</h1>
   <p class="sub" style="margin:0">An AI agent with Python, files &amp; the web — running in your browser</p>
   <p id="pystatus" role="status" style="margin-block:0"><span class="dot" id="pydot" aria-hidden="true"></span><span id="pytext">Loading Python…</span></p>
+  <p id="gwstatus" hidden><span id="gwuser"></span><button type="button" id="gwbtn"></button></p>
 </header>
 <main>
   <section id="chatcol" aria-labelledby="chat-heading">
@@ -149,8 +160,10 @@
     </section>
     <details id="settings">
       <summary><h2>Settings</h2></summary>
-      <label class="f">API endpoint (OpenAI-compatible)<input id="endpoint" type="url" autocomplete="url" placeholder="https://lumen.ncsa.illinois.edu/v1"></label>
-      <label class="f">API key<input id="apikey" type="password" autocomplete="off" placeholder="sk-…"></label>
+      <label class="f">Sign-in gateway URL (optional)<input id="gateway" type="url" autocomplete="off" placeholder="https://agentic-auth.example.workers.dev" aria-describedby="gateway-hint"></label>
+      <p class="small" id="gateway-hint">When set, you sign in with your Illinois account; the gateway provides the model API and web proxy, so no API key is needed.</p>
+      <label class="f" id="lbl-endpoint">API endpoint (OpenAI-compatible)<input id="endpoint" type="url" autocomplete="url" placeholder="https://lumen.ncsa.illinois.edu/v1"></label>
+      <label class="f" id="lbl-apikey">API key<input id="apikey" type="password" autocomplete="off" placeholder="sk-…"></label>
       <label class="f">Model<input id="model" list="modellist" autocomplete="off" placeholder="e.g. glm-5.3-flash"><datalist id="modellist"></datalist></label>
       <div class="row"><button id="loadmodels">Load model list</button><button id="sharelink" aria-describedby="settings-hint">Copy setup link</button></div>
       <label class="f">Max tool steps per request<input id="maxsteps" type="number" min="1" max="50"></label>
@@ -162,8 +175,8 @@
         </select>
       </label>
       <label class="f">SearXNG URL (optional)<input id="searxng" type="url" placeholder="https://searx.example.org"></label>
-      <label class="f">Reader proxy (web pages → text)<input id="readerproxy" placeholder="https://r.jina.ai/{url}"></label>
-      <label class="f">CORS proxy (raw downloads)<input id="corsproxy" placeholder="https://corsproxy.io/?url={enc}"></label>
+      <label class="f" id="lbl-readerproxy">Reader proxy (web pages → text)<input id="readerproxy" placeholder="https://r.jina.ai/{url}"></label>
+      <label class="f" id="lbl-corsproxy">CORS proxy (raw downloads)<input id="corsproxy" placeholder="https://corsproxy.io/?url={enc}"></label>
       <p class="small" id="settings-hint">Settings are stored only in this browser. <code>{url}</code> = raw URL, <code>{enc}</code> = URL-encoded. A setup link puts settings after <code>#</code>, which is never sent to the web server — but anyone with the link can use the key.</p>
     </details>
   </aside>
@@ -172,6 +185,18 @@
   <div class="top"><h2 id="rawdlg-title" style="margin:0;font-size:15px;text-transform:none;letter-spacing:0;color:var(--ink)">Raw messages sent to the model (this is all the model "sees")</h2><button id="closeraw">Close</button></div>
   <pre id="rawpre" tabindex="0" aria-labelledby="rawdlg-title"></pre>
 </div></dialog>
+<dialog id="signindlg" aria-labelledby="signin-title" aria-describedby="signin-desc">
+  <h2 id="signin-title">Sign in</h2>
+  <p id="signin-desc">Sign in with your University of Illinois account to use the agent.</p>
+  <p id="signin-error" role="alert"></p>
+  <div id="signin-providers"></div>
+  <form id="signin-form" hidden>
+    <label for="signin-email">Illinois email address</label>
+    <input id="signin-email" name="email" type="email" autocomplete="email" required placeholder="netid@illinois.edu">
+    <button class="primary" type="submit" id="signin-submit">Sign in</button>
+  </form>
+  <div class="row" style="justify-content:flex-end"><button type="button" id="signin-close">Not now</button></div>
+</dialog>
 
 <!-- ======================= Python worker ======================= -->
 <script id="worker-src" type="text/js-worker">
@@ -345,8 +370,11 @@ const TOOL_RESULT_LIMIT = 10000;
 const DEFAULTS = {
   endpoint: "https://lumen.ncsa.illinois.edu/v1", apikey: "", model: "", maxsteps: 15,
   searchprov: "duckduckgo", searxng: "", readerproxy: "https://r.jina.ai/{url}", corsproxy: "https://corsproxy.io/?url={enc}",
+  gateway: "",
 };
-const HASH_KEYS = { endpoint: "endpoint", key: "apikey", apikey: "apikey", model: "model", maxsteps: "maxsteps", search: "searchprov", searxng: "searxng", reader: "readerproxy", proxy: "corsproxy" };
+const HASH_KEYS = { endpoint: "endpoint", key: "apikey", apikey: "apikey", model: "model", maxsteps: "maxsteps", search: "searchprov", searxng: "searxng", reader: "readerproxy", proxy: "corsproxy", gateway: "gateway" };
+const SESSION_KEY = "acl_session";
+let authErrorFromLink = null;
 const settings = {};
 function lsGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
 function lsSet(k, v) { try { localStorage.setItem(k, v); } catch {} }
@@ -355,14 +383,114 @@ function loadSettings() {
   const params = new URLSearchParams(location.hash.slice(1));
   let fromLink = false;
   for (const [hk, sk] of Object.entries(HASH_KEYS)) if (params.has(hk)) { settings[sk] = params.get(hk); lsSet("acl_" + sk, settings[sk]); fromLink = true; }
-  if (fromLink) history.replaceState(null, "", location.pathname); // hide key from the address bar
+  // Redirect sign-in providers return here with #session=... or #auth_error=...
+  if (params.has("session")) { lsSet(SESSION_KEY, params.get("session")); fromLink = true; }
+  if (params.has("auth_error")) { authErrorFromLink = params.get("auth_error"); fromLink = true; }
+  if (fromLink) history.replaceState(null, "", location.pathname + location.search); // hide key/session from the address bar
   for (const k in DEFAULTS) {
     $(k).value = settings[k];
     $(k).addEventListener("change", () => { settings[k] = $(k).value.trim(); lsSet("acl_" + k, settings[k]); });
   }
 }
-function base() { return (settings.endpoint || DEFAULTS.endpoint).replace(/\/+$/, "").replace(/\/chat\/completions$/, ""); }
-function authHeaders() { return settings.apikey ? { Authorization: "Bearer " + settings.apikey } : {}; }
+function base() { return gw() ? gw() + "/v1" : (settings.endpoint || DEFAULTS.endpoint).replace(/\/+$/, "").replace(/\/chat\/completions$/, ""); }
+function authHeaders() {
+  if (gw()) { const s = getSession(); return s ? { Authorization: "Bearer " + s.token } : {}; }
+  return settings.apikey ? { Authorization: "Bearer " + settings.apikey } : {};
+}
+
+// ---------------- Sign-in gateway (optional) ----------------
+// With a gateway, the Worker holds the API key and enforces per-user limits; the page only holds a session token.
+function gw() { return (settings.gateway || "").trim().replace(/\/+$/, ""); }
+function readerTpl() { return gw() ? gw() + "/proxy?url={enc}" : settings.readerproxy; }
+function corsTpl() { return gw() ? gw() + "/proxy?url={enc}" : settings.corsproxy; }
+function getSession() {
+  const token = lsGet(SESSION_KEY);
+  if (!token) return null;
+  try {
+    const claims = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    if (claims.exp * 1000 > Date.now()) return { token, claims };
+  } catch {}
+  clearSession();
+  return null;
+}
+function clearSession() { try { localStorage.removeItem(SESSION_KEY); } catch {} }
+// fetch() that adds the session token to requests addressed to the gateway, and reopens sign-in on 401.
+async function gfetch(url, opts = {}) {
+  const toGateway = gw() && String(url).startsWith(gw() + "/");
+  if (toGateway) opts = { ...opts, headers: { ...(opts.headers || {}), ...authHeaders() } };
+  const r = await fetch(url, opts);
+  if (toGateway && r.status === 401) {
+    const msg = (await gatewayError(r.clone()))?.message;
+    clearSession(); applyGatewayUI();
+    openSignIn(msg || "Your session has expired. Please sign in again.");
+  }
+  return r;
+}
+// Gateway errors are JSON { error, message, retry_after? }.
+async function gatewayError(resp, text) {
+  try {
+    const j = JSON.parse(text ?? await resp.text());
+    if (j && typeof j.error === "string") {
+      const ra = j.retry_after ?? parseInt(resp.headers.get("Retry-After"));
+      return { error: j.error, message: j.message || j.error, retry_after: Number.isFinite(ra) ? ra : null };
+    }
+  } catch {}
+  return null;
+}
+function applyGatewayUI() {
+  const on = !!gw();
+  for (const id of ["lbl-endpoint", "lbl-apikey", "lbl-readerproxy", "lbl-corsproxy"]) $(id).hidden = on;
+  $("gwstatus").hidden = !on;
+  if (!on) return;
+  const s = getSession();
+  $("gwuser").textContent = s ? `Signed in as ${s.claims.email || s.claims.name || s.claims.sub}` : "Not signed in";
+  $("gwbtn").textContent = s ? "Sign out" : "Sign in";
+}
+async function openSignIn(message) {
+  if (!gw()) return;
+  const dlg = $("signindlg");
+  $("signin-error").textContent = message || "";
+  $("signin-providers").innerHTML = "";
+  $("signin-form").hidden = true;
+  if (!dlg.open) dlg.showModal();
+  try {
+    const r = await fetch(gw() + "/auth/config");
+    const cfg = await r.json();
+    for (const p of cfg.providers || []) {
+      if (p.type === "form") { $("signin-form").hidden = false; $("signin-email").setAttribute("aria-describedby", "signin-desc"); continue; }
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "primary"; b.textContent = "Sign in with " + (p.label || p.id);
+      b.onclick = () => { location.href = `${gw()}/auth/login?provider=${encodeURIComponent(p.id)}&return_to=${encodeURIComponent(location.origin + location.pathname + location.search)}`; };
+      $("signin-providers").append(b);
+    }
+    if (!(cfg.providers || []).length) $("signin-error").textContent = "The sign-in gateway has no sign-in methods configured.";
+  } catch (e) {
+    $("signin-error").textContent = "Could not reach the sign-in gateway at " + gw() + " (" + e.message + ").";
+  }
+  ($("signin-form").hidden ? $("signin-providers").querySelector("button") || $("signin-close") : $("signin-email")).focus();
+}
+async function submitEmailSignIn(e) {
+  e.preventDefault();
+  const email = $("signin-email").value.trim();
+  $("signin-submit").disabled = true;
+  $("signin-error").textContent = "";
+  try {
+    const r = await fetch(gw() + "/auth/email-login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }) });
+    const text = await r.text();
+    let j = {}; try { j = JSON.parse(text); } catch {}
+    if (!r.ok || !j.session) throw new Error(j.message || j.error || "Sign-in failed (HTTP " + r.status + ")");
+    lsSet(SESSION_KEY, j.session);
+    $("signindlg").close();
+    applyGatewayUI();
+    note("Signed in as " + (getSession()?.claims.email || email) + ".");
+    $("input").focus();
+  } catch (err) {
+    $("signin-error").textContent = err.message;
+    $("signin-email").focus();
+  } finally {
+    $("signin-submit").disabled = false;
+  }
+}
 
 // ---------------- Python worker ----------------
 let worker, pyReady = false, rpcId = 0, pending = new Map();
@@ -475,14 +603,18 @@ function proxied(tpl, url) { return tpl.replaceAll("{enc}", encodeURIComponent(u
 async function fetchWithFallback(url, { reader = false, signal } = {}) {
   const attempts = [];
   if (!reader) attempts.push(["direct", url]);
-  if (reader && settings.readerproxy) attempts.push(["reader proxy", proxied(settings.readerproxy, url)]);
-  if (settings.corsproxy) attempts.push(["CORS proxy", proxied(settings.corsproxy, url)]);
+  if (reader && readerTpl()) attempts.push(["reader proxy", proxied(readerTpl(), url)]);
+  if (corsTpl() && !attempts.some(([, u]) => u === proxied(corsTpl(), url))) attempts.push(["CORS proxy", proxied(corsTpl(), url)]);
   if (reader) attempts.push(["direct", url]);
   const errors = [];
   for (const [how, u] of attempts) {
     try {
-      const r = await fetch(u, { signal });
-      if (!r.ok) { errors.push(`${how}: HTTP ${r.status}`); continue; }
+      const r = await gfetch(u, { signal });
+      if (!r.ok) {
+        const ge = gw() && u.startsWith(gw() + "/") ? await gatewayError(r) : null;
+        errors.push(`${how}: ${ge ? ge.message : "HTTP " + r.status}`);
+        continue;
+      }
       return { resp: r, how };
     } catch (e) {
       if (e.name === "AbortError") throw e;
@@ -587,11 +719,11 @@ async function search(provider, query, n, signal) {
   }
   // DuckDuckGo HTML endpoint, fetched through a CORS proxy
   const target = "https://html.duckduckgo.com/html/?q=" + encodeURIComponent(query);
-  const tries = [settings.corsproxy, "https://api.allorigins.win/raw?url={enc}"].filter(Boolean);
+  const tries = [corsTpl(), "https://api.allorigins.win/raw?url={enc}"].filter(Boolean);
   let lastErr;
   for (const tpl of tries) {
     try {
-      const r = await fetch(proxied(tpl, target), { signal });
+      const r = await gfetch(proxied(tpl, target), { signal });
       if (!r.ok) throw new Error("HTTP " + r.status);
       const doc = new DOMParser().parseFromString(await r.text(), "text/html");
       const out = [];
@@ -746,16 +878,38 @@ function compactHistory() {
     ? { ...m, content: m.content.slice(0, 1500) + "\n... [older tool output shortened]" } : m);
 }
 
+async function countdown(seconds, message, signal) {
+  for (let left = seconds; left > 0; left--) {
+    $("stepinfo").textContent = `⏳ ${message} — retrying in ${left}s`;
+    await new Promise((res, rej) => {
+      if (signal.aborted) return rej(new DOMException("Stopped", "AbortError"));
+      const t = setTimeout(res, 1000);
+      signal.addEventListener("abort", () => { clearTimeout(t); rej(new DOMException("Stopped", "AbortError")); }, { once: true });
+    });
+  }
+}
+
 async function callModel(signal) {
   const body = JSON.stringify({ model: settings.model, messages: compactHistory(), tools: TOOL_DEFS, tool_choice: "auto" });
   let resp, text;
   for (let attempt = 0; ; attempt++) {
-    resp = await fetch(base() + "/chat/completions", {
+    resp = await gfetch(base() + "/chat/completions", {
       method: "POST", signal,
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body,
     });
     text = await resp.text();
+    if (gw()) {
+      if (resp.ok) break;
+      const ge = await gatewayError(resp, text);
+      // Per-user limits: wait and retry automatically when the wait is short.
+      if (resp.status === 429 && ge && ["busy", "rate"].includes(ge.error) && (ge.retry_after ?? 99) <= 30 && attempt < 5) {
+        await countdown(Math.max(1, ge.retry_after), ge.message, signal);
+        continue;
+      }
+      if (resp.status === 401) throw Object.assign(new Error(ge?.message || "Not signed in."), { signedOut: true });
+      throw new Error(ge?.message || `Gateway error HTTP ${resp.status}: ${text.slice(0, 300)}`);
+    }
     if (!(resp.status === 429 || resp.status >= 500) || attempt >= 2) break;
     $("stepinfo").textContent = `⏳ Server busy (HTTP ${resp.status}), retrying…`;
     await new Promise((res, rej) => { const t = setTimeout(res, 2000 * (attempt + 1)); signal.addEventListener("abort", () => { clearTimeout(t); rej(new DOMException("Stopped", "AbortError")); }, { once: true }); });
@@ -774,12 +928,15 @@ async function callModel(signal) {
 }
 
 async function runAgent(userText) {
-  if (!settings.model || !settings.apikey) {
+  if (gw()) {
+    if (!getSession()) { $("input").value = userText; openSignIn(); return; }
+    if (!settings.model) { $("settings").open = true; $("model").focus(); note("Please choose a model in Settings first (click “Load model list”).", true); return; }
+  } else if (!settings.model || !settings.apikey) {
     $("settings").open = true;
     $(settings.apikey ? "model" : "apikey").focus();
   }
-  if (!settings.model) { note("Please choose a model in Settings first (click “Load model list”).", true); return; }
-  if (!settings.apikey) note("No API key set — the request will probably be rejected. Enter a key in Settings.", true);
+  if (!gw() && !settings.model) { note("Please choose a model in Settings first (click “Load model list”).", true); return; }
+  if (!gw() && !settings.apikey) note("No API key set — the request will probably be rejected. Enter a key in Settings.", true);
   addMsg("user", userText);
   messages.push({ role: "user", content: userText });
   setBusy(true);
@@ -856,6 +1013,7 @@ async function runAgent(userText) {
       for (const tc of lastAsst.tool_calls) if (!answered.has(tc.id)) messages.push({ role: "tool", tool_call_id: tc.id, content: "Interrupted." });
     } else if (last?.role === "user") {
       messages.pop(); // failed before the model answered; allow retry
+      if (e.signedOut && !$("input").value) $("input").value = userText; // ready to resend after signing in
     }
   } finally {
     setBusy(false);
@@ -892,6 +1050,7 @@ function initChips() {
 }
 function send() {
   if (busy) return;
+  if (gw() && !getSession()) { openSignIn(); return; }
   const text = $("input").value.trim();
   if (!text) return;
   if (!pyReady) { note("Python is still loading — please wait a few seconds.", true); return; }
@@ -937,6 +1096,16 @@ function init() {
   initChips();
   resetChat();
   startWorker();
+  $("signin-form").addEventListener("submit", submitEmailSignIn);
+  $("signin-close").onclick = () => $("signindlg").close();
+  $("gwbtn").onclick = () => {
+    if (getSession()) { clearSession(); applyGatewayUI(); note("Signed out."); }
+    else openSignIn();
+  };
+  $("gateway").addEventListener("change", () => { applyGatewayUI(); if (gw() && !getSession()) openSignIn(); });
+  applyGatewayUI();
+  if (gw() && authErrorFromLink) openSignIn("Sign-in failed: " + authErrorFromLink);
+  else if (gw() && !getSession()) openSignIn();
   $("send").onclick = send;
   $("stop").onclick = () => {
     abortCtl?.abort();
@@ -968,8 +1137,8 @@ function init() {
   $("closeraw").onclick = () => $("rawdlg").close();
   $("loadmodels").onclick = async () => {
     try {
-      const r = await fetch(base() + "/models", { headers: authHeaders() });
-      if (!r.ok) throw new Error("HTTP " + r.status + (r.status === 401 ? " (check API key)" : ""));
+      const r = await gfetch(base() + "/models", { headers: authHeaders() });
+      if (!r.ok) throw new Error(gw() ? ((await gatewayError(r))?.message || "HTTP " + r.status) : "HTTP " + r.status + (r.status === 401 ? " (check API key)" : ""));
       const j = await r.json();
       const ids = (j.data || []).map(m => m.id).sort();
       $("modellist").innerHTML = ids.map(id => `<option value="${esc(id)}">`).join("");
@@ -980,10 +1149,11 @@ function init() {
   $("sharelink").onclick = async () => {
     const p = new URLSearchParams();
     if (settings.endpoint && settings.endpoint !== DEFAULTS.endpoint) p.set("endpoint", settings.endpoint);
-    if (settings.apikey) p.set("key", settings.apikey);
+    if (settings.gateway) p.set("gateway", settings.gateway);
+    else if (settings.apikey) p.set("key", settings.apikey);
     if (settings.model) p.set("model", settings.model);
     const link = location.origin + location.pathname + "#" + p.toString();
-    try { await navigator.clipboard.writeText(link); note("Setup link copied to clipboard (contains the API key — share carefully)."); }
+    try { await navigator.clipboard.writeText(link); note(p.has("key") ? "Setup link copied to clipboard (contains the API key — share carefully)." : "Setup link copied to clipboard."); }
     catch { prompt("Copy this link:", link); }
   };
 }

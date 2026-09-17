@@ -8,14 +8,21 @@
 //   GET  /auth/callback                  -> code exchange, ID-token verification, policy check,
 //                                           redirect back to return_to#session=<token>
 //   GET  /auth/me                        -> the signed-in user (requires Bearer session)
-//   *    /v1/*                           -> LLM API proxy (requires Bearer session; the Worker adds
-//                                           the real API key from the LUMEN_API_KEY secret)
+//   POST /auth/email-login {email}       -> interim sign-in with an @illinois.edu address (EMAIL_LOGIN="true")
+//   GET  /v1/models, POST /v1/chat/completions, GET /proxy?url=
+//                                        -> require a Bearer session; run through the per-user limiter
+//                                           (limiter.js), which adds the LUMEN_API_KEY secret upstream
 //
 // Configuration (wrangler.toml [vars] + `wrangler secret put`):
 //   ALLOWED_ORIGINS  comma-separated origins allowed to call the Worker and to be return_to targets
 //   PROVIDERS        JSON: { name: { label, issuer, client_id, scope?, auth_params?, rules: [...] } }
 //   SESSION_TTL      seconds (default 28800 = 8h)
 //   UPSTREAM         LLM API base (default https://lumen.ncsa.illinois.edu/v1)
+//   EMAIL_LOGIN      "true" to enable email sign-in (unverified identity; replace with CILogon)
+//   EVENT_ID         name of the event; a new value starts a fresh user registry and event token budget
+//   EVENT_ENDS       ISO date/time; no sessions are issued or accepted after it
+//   DENYLIST         comma-separated subs or emails to block
+//   Limits (see limiter.js): RATE_LIMIT, RATE_WINDOW_S, HOUR_BYTES, HOUR_TOKENS, EVENT_TOKENS, MAX_USERS, ...
 //   secrets: SESSION_SECRET (random, >= 32 chars), <NAME>_CLIENT_SECRET per provider (optional,
 //            e.g. CILOGON_CLIENT_SECRET), LUMEN_API_KEY (optional)
 //
@@ -26,6 +33,8 @@
 // `contains` matches one item of a ";"- or ","-separated list (e.g. CILogon `affiliation`).
 
 import { handleMockIdp } from "./mock-idp.js";
+import { UserLimiter, GlobalBudget, limits, errorResponse, isBlockedHost, globalBudget } from "./limiter.js";
+export { UserLimiter, GlobalBudget };
 
 const enc = new TextEncoder();
 const b64url = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -128,11 +137,17 @@ function config(env, selfOrigin) {
       rules: [{ claim: "idp", equals: "urn:mace:incommon:uiuc.edu", message: "only University of Illinois (Shibboleth) logins are accepted" }],
     };
   }
-  return { origins, providers, ttl: parseInt(env.SESSION_TTL || "28800"), upstream: (env.UPSTREAM || "https://lumen.ncsa.illinois.edu/v1").replace(/\/+$/, "") };
+  const eventEnds = env.EVENT_ENDS ? Math.floor(Date.parse(env.EVENT_ENDS) / 1000) : null;
+  const denylist = new Set((env.DENYLIST || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
+  return { origins, providers, ttl: parseInt(env.SESSION_TTL || "28800"), eventEnds, denylist, emailLogin: env.EMAIL_LOGIN === "true" };
 }
 function corsHeaders(origin, cfg) {
   if (!cfg.origins.includes(origin)) return {};
-  return { "Access-Control-Allow-Origin": origin, "Access-Control-Allow-Headers": "Authorization, Content-Type", "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Max-Age": "86400", Vary: "Origin" };
+  return {
+    "Access-Control-Allow-Origin": origin, "Access-Control-Allow-Headers": "Authorization, Content-Type",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Max-Age": "86400", Vary: "Origin",
+    "Access-Control-Expose-Headers": "Retry-After, X-Usage-Hour-Bytes, X-Usage-Hour-Tokens, X-Limit-Hour-Bytes, X-Limit-Hour-Tokens",
+  };
 }
 const json = (obj, status, headers) => new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", ...headers } });
 function cookie(req, name) {
@@ -203,7 +218,7 @@ async function callback(req, env, cfg, url) {
       email: claims.email || claims.eppn || claims.preferred_username || null,
       name: claims.name || [claims.given_name, claims.family_name].filter(Boolean).join(" ") || null,
       idp: claims.idp_name || claims.idp || claims.hd || claims.tid || null,
-      iat: t, exp: t + cfg.ttl,
+      iat: t, exp: Math.min(t + cfg.ttl, cfg.eventEnds || Infinity),
     };
     return redirectBack(tx.return_to, { session: await signToken(session, env.SESSION_SECRET) }, clear);
   } catch (e) {
@@ -211,16 +226,80 @@ async function callback(req, env, cfg, url) {
   }
 }
 
-async function proxyLLM(req, env, cfg, url, cors) {
-  if (env.MOCK_IDP_PRIVATE_JWK) return json({ error: "LLM proxy is disabled while the simulated identity provider is enabled" }, 503, cors);
-  if (!env.LUMEN_API_KEY) return json({ error: "LLM proxy not configured (LUMEN_API_KEY secret missing)" }, 503, cors);
-  const upstream = new Request(cfg.upstream + url.pathname.slice(3) + url.search, {
-    method: req.method,
-    headers: { "Content-Type": req.headers.get("Content-Type") || "application/json", Authorization: "Bearer " + env.LUMEN_API_KEY },
-    body: req.method === "POST" ? req.body : undefined,
-  });
-  const resp = await fetch(upstream);
-  return new Response(resp.body, { status: resp.status, headers: { ...cors, "Content-Type": resp.headers.get("Content-Type") || "application/json" } });
+const NETID_EMAIL = /^[a-z][a-z0-9]{1,7}@illinois\.edu$/;
+
+async function emailLogin(req, env, cfg) {
+  if (!cfg.emailLogin) return errorResponse(404, "not_found", "Email sign-in is not enabled.");
+  if (cfg.eventEnds && now() >= cfg.eventEnds) return errorResponse(403, "forbidden", "This event has ended.");
+  let email = "";
+  try { email = String((await req.json()).email || "").trim().toLowerCase(); } catch {}
+  if (!NETID_EMAIL.test(email)) return errorResponse(400, "bad_request", "Please enter your University of Illinois email address (netid@illinois.edu).");
+  const sub = "email:" + email;
+  if (cfg.denylist.has(sub) || cfg.denylist.has(email)) return errorResponse(403, "forbidden", "This account has been blocked. Please contact the trainer.");
+  const reg = await globalBudget(env).fetch("https://global/register", { method: "POST", body: JSON.stringify({ sub, ip: req.headers.get("CF-Connecting-IP") || "" }) });
+  if (!reg.ok) return reg;
+  const t = now();
+  const session = { typ: "session", sub, provider: "email", email, name: null, idp: "unverified email", iat: t, exp: Math.min(t + 36000, cfg.eventEnds || Infinity) };
+  return Response.json({ session: await signToken(session, env.SESSION_SECRET), user: { email, exp: session.exp } });
+}
+
+async function readBodyCapped(req, maxBytes) {
+  const reader = req.body?.getReader();
+  if (!reader) return "";
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) { await reader.cancel(); return null; }
+    chunks.push(value);
+  }
+  const all = new Uint8Array(size);
+  let off = 0;
+  for (const c of chunks) { all.set(c, off); off += c.byteLength; }
+  return new TextDecoder().decode(all);
+}
+
+// Build the job for the user's limiter, or return an error Response.
+async function limitedJob(req, env, url, session) {
+  const L = limits(env);
+  const needsKey = () => {
+    if (env.MOCK_IDP_PRIVATE_JWK) return errorResponse(503, "upstream_error", "LLM access is disabled while the simulated identity provider is enabled.");
+    if (!env.LUMEN_API_KEY) return errorResponse(503, "upstream_error", "LLM access is not configured (LUMEN_API_KEY secret missing).");
+    return null;
+  };
+  if (url.pathname === "/v1/models" && req.method === "GET") {
+    return needsKey() || { kind: "llm", sub: session.sub, method: "GET", path: "/models" };
+  }
+  if (url.pathname === "/v1/chat/completions" && req.method === "POST") {
+    const missing = needsKey();
+    if (missing) return missing;
+    const text = await readBodyCapped(req, L.maxBodyBytes);
+    if (text === null) return errorResponse(413, "too_large", `Request too large (limit ${Math.round(L.maxBodyBytes / 1000)} KB). Start a new chat to shorten the conversation.`);
+    let body;
+    try { body = JSON.parse(text); } catch { return errorResponse(400, "bad_request", "Request body must be JSON."); }
+    if (!body || typeof body !== "object" || Array.isArray(body)) return errorResponse(400, "bad_request", "Request body must be a JSON object.");
+    if (body.stream) return errorResponse(400, "bad_request", "Streaming responses are not supported by this gateway.");
+    body.max_tokens = Math.min(Number(body.max_tokens) || L.maxOutputTokens, L.maxOutputTokens);
+    if (body.max_completion_tokens !== undefined) body.max_completion_tokens = Math.min(Number(body.max_completion_tokens) || L.maxOutputTokens, L.maxOutputTokens);
+    return { kind: "llm", sub: session.sub, method: "POST", path: "/chat/completions", body: JSON.stringify(body) };
+  }
+  if (url.pathname === "/proxy" && req.method === "GET") {
+    const target = url.searchParams.get("url") || "";
+    if (!/^https?:\/\//i.test(target)) return errorResponse(400, "bad_request", "url must start with http:// or https://");
+    // Reject obviously private targets before they use up rate limit (redirects are re-checked in the limiter).
+    try { if (isBlockedHost(new URL(target).hostname)) return errorResponse(403, "forbidden", "Private or local addresses cannot be fetched."); }
+    catch { return errorResponse(400, "bad_request", "Invalid URL."); }
+    return { kind: "proxy", sub: session.sub, url: target };
+  }
+  return errorResponse(404, "not_found", "Not found.");
+}
+
+function withCors(resp, cors) {
+  const headers = new Headers(resp.headers);
+  for (const [k, v] of Object.entries(cors)) headers.set(k, v);
+  return new Response(resp.body, { status: resp.status, headers });
 }
 
 export default {
@@ -236,18 +315,32 @@ export default {
     if (req.method === "OPTIONS") return new Response(null, { status: cors["Access-Control-Allow-Origin"] ? 204 : 403, headers: cors });
     try {
       if (url.pathname === "/auth/config") {
-        return json({ providers: Object.entries(cfg.providers).map(([id, p]) => ({ id, label: p.label || id })), llm_proxy: !!env.LUMEN_API_KEY && !env.MOCK_IDP_PRIVATE_JWK }, 200, cors);
+        const providers = Object.entries(cfg.providers).map(([id, p]) => ({ id, label: p.label || id, type: "redirect" }));
+        if (cfg.emailLogin) providers.unshift({ id: "email", label: "Illinois email address", type: "form" });
+        return json({ providers, llm_proxy: !!env.LUMEN_API_KEY && !env.MOCK_IDP_PRIVATE_JWK }, 200, cors);
       }
       if (url.pathname === "/auth/login") return await login(req, env, cfg, url);
       if (url.pathname === "/auth/callback") return await callback(req, env, cfg, url);
-      if (origin && !cors["Access-Control-Allow-Origin"]) return json({ error: "Origin not allowed" }, 403);
+      if (origin && !cors["Access-Control-Allow-Origin"]) return json({ error: "forbidden", message: "Origin not allowed" }, 403);
+      if (url.pathname === "/auth/email-login" && req.method === "POST") return withCors(await emailLogin(req, env, cfg), cors);
+
       const session = await sessionFrom(req, env);
-      if (!session) return json({ error: "Not signed in (missing or expired session token)" }, 401, cors);
+      if (!session || (cfg.eventEnds && now() >= cfg.eventEnds)) {
+        return withCors(errorResponse(401, "not_signed_in", "Please sign in (your session is missing or has expired)."), cors);
+      }
+      if (cfg.denylist.has(session.sub.toLowerCase()) || (session.email && cfg.denylist.has(session.email.toLowerCase()))) {
+        return withCors(errorResponse(403, "forbidden", "This account has been blocked. Please contact the trainer."), cors);
+      }
       if (url.pathname === "/auth/me") return json({ user: session }, 200, cors);
-      if (url.pathname.startsWith("/v1/")) return await proxyLLM(req, env, cfg, url, cors);
-      return json({ error: "Not found" }, 404, cors);
+
+      const job = await limitedJob(req, env, url, session);
+      if (job instanceof Response) return withCors(job, cors);
+      // Fail closed: if the limiter can't be reached, the request is refused.
+      const limiter = env.LIMITER.get(env.LIMITER.idFromName(session.sub));
+      const resp = await limiter.fetch("https://limiter/run", { method: "POST", body: JSON.stringify(job) });
+      return withCors(resp, cors);
     } catch (e) {
-      return json({ error: e.message }, 500, cors);
+      return withCors(errorResponse(503, "upstream_error", "Gateway error: " + e.message), cors);
     }
   },
 };

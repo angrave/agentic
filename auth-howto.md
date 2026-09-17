@@ -69,6 +69,34 @@ Design decisions (from the research):
 Rules used for CILogon: `idp` equals `urn:mace:incommon:uiuc.edu`. Optional extra: `affiliation`
 `contains` `member@illinois.edu` (excludes e.g. some guest accounts; attribute release can vary, so test first).
 
+## Gateway with sign-in and usage limits (implemented)
+
+The Worker is now a full gateway for the app (design and GLM review: [`auth-limits-plan.md`](auth-limits-plan.md)).
+
+- **Sign-in:** interim email form (`EMAIL_LOGIN="true"`). Only NetID-shaped `netid@illinois.edu` addresses are
+  accepted. **This does not prove identity.** Anyone can type an address, so the limits below are the protection
+  until CILogon is enabled.
+- **Only these routes, all requiring a session:** `GET /v1/models`, `POST /v1/chat/completions`, `GET /proxy?url=`.
+  The Lumen key is added by the Worker; `max_tokens` is capped; streaming and bodies > 512 KB are refused.
+- **Per-user limits** (a Durable Object per user): one request at a time, 10 requests per 30 s,
+  10 MB and 1.5 M tokens per rolling hour (tokens from Lumen's `usage`, or estimated as bytes ÷ 4).
+- **Event limits** (a Durable Object per `EVENT_ID`): 60 M tokens in total, 60 distinct users, 60 new sign-ins
+  per IP per 10 minutes. `EVENT_ENDS` and `DENYLIST` stop sessions.
+- **Web proxy:** private and local addresses are blocked (redirects included), downloads are capped at 5 MB, and
+  they count toward the user's hourly bytes.
+- **App:** open `https://angrave.github.io/agentic/#gateway=https://agentic-auth.angrave.workers.dev&model=glm-5.3-flash`.
+  The app then asks attendees to sign in, sends no API key, and waits and retries automatically on short rate limits.
+
+**To turn LLM access on** (currently off in production):
+```
+cd auth
+npx wrangler secret delete MOCK_IDP_PRIVATE_JWK   # the simulated IdP must be off
+npx wrangler secret put LUMEN_API_KEY             # ideally a budget-capped key for the event
+# edit wrangler.toml: EVENT_ID (new per event), EVENT_ENDS, limits if needed; then:
+npx wrangler deploy
+```
+Once that works, delete the old open proxy (`npx wrangler delete agentic-proxy`) so the limits can't be bypassed.
+
 ## Keeping the Lumen API key in the Worker
 
 The prototype already supports this: set `LUMEN_API_KEY` as a Worker secret and the Worker adds it to
@@ -89,7 +117,7 @@ Layered, strongest first:
 2. **Authentication.** Without an Illinois login there is no session token; a script that finds the Worker
    URL gets `401`. The `Origin` check only stops other websites, not scripts, so it is not a security control
    on its own.
-3. **Per-user quotas in the Worker** (not yet implemented; a proposal):
+3. **Per-user quotas in the Worker** (implemented; see above. Original proposal:)
    - A **Durable Object per user** (keyed by the session `sub`, i.e. the NetID) that records the
      `usage.total_tokens` the Worker sees in each response, and refuses with `429` once a daily or event budget is
      reached. Durable Objects give strongly consistent counters and are on the Workers free plan.

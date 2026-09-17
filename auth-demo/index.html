@@ -36,6 +36,11 @@
     <h2 id="status-h">1. Sign in</h2>
     <p id="status" role="status" aria-live="polite">Loading sign-in options…</p>
     <div class="row" id="providers"></div>
+    <form id="emailform" hidden style="margin-top:10px">
+      <label for="email">Illinois email address</label>
+      <div class="row"><input id="email" type="email" autocomplete="email" required placeholder="netid@illinois.edu" style="flex:1 1 220px;width:auto"><button class="primary" type="submit">Sign in</button></div>
+      <p id="emailerr" class="err" role="alert"></p>
+    </form>
     <div class="row" style="margin-top:10px"><button id="signout" hidden>Sign out</button></div>
   </section>
 
@@ -95,7 +100,9 @@ async function loadProviders() {
   try {
     const r = await fetch(worker() + "/auth/config");
     const cfg = await r.json();
+    $("emailform").hidden = true;
     for (const p of cfg.providers) {
+      if (p.type === "form") { $("emailform").hidden = false; continue; }
       const b = document.createElement("button");
       b.className = "primary";
       b.textContent = "Sign in with " + p.label;
@@ -120,6 +127,17 @@ async function call(path, withToken = true) {
     $("out").textContent = `HTTP ${r.status}\n${body.slice(0, 4000)}`;
   } catch (e) { $("out").textContent = "Request failed: " + e.message; }
 }
+$("emailform").onsubmit = async (e) => {
+  e.preventDefault();
+  $("emailerr").textContent = "";
+  try {
+    const r = await fetch(worker() + "/auth/email-login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: $("email").value.trim() }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.session) throw new Error(j.message || j.error || "HTTP " + r.status);
+    store.set("session", j.session);
+    renderStatus();
+  } catch (err) { $("emailerr").textContent = "Sign-in failed: " + err.message; }
+};
 $("me").onclick = () => call("/auth/me");
 $("models").onclick = () => call("/v1/models");
 $("nosession").onclick = () => call("/auth/me", false);
