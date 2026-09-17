@@ -111,7 +111,7 @@ are all rejected; the LLM proxy is refused while the simulator is on.
 
 ```
 cd auth && npx wrangler dev --port 8787        # needs auth/.dev.vars with SESSION_SECRET and MOCK_IDP_PRIVATE_JWK
-cd tests && node auth.mjs                       # or WORKER=https://agentic-auth.angrave.workers.dev node auth.mjs
+cd tests && node auth.mjs    # live: PAGE=https://angrave.github.io PAGE_PATH=/agentic/auth-demo/ WORKER=https://agentic-auth.angrave.workers.dev node auth.mjs
 ```
 
 ## Sources

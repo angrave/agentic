@@ -2,7 +2,7 @@
 import http from "node:http"; import fs from "node:fs"; import { chromium } from "playwright";
 const WORKER = process.env.WORKER || "http://localhost:8787";
 const PAGE_ORIGIN = process.env.PAGE || "http://localhost:8000";
-const PAGE = PAGE_ORIGIN + "/auth-demo/";
+const PAGE = PAGE_ORIGIN + (process.env.PAGE_PATH || "/auth-demo/");
 let srv;
 if (PAGE_ORIGIN.startsWith("http://localhost")) {
   srv = http.createServer((q, r) => { r.writeHead(200, { "Content-Type": "text/html" }); r.end(fs.readFileSync(new URL("../auth-demo/index.html", import.meta.url))); });
