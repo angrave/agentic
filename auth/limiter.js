@@ -5,8 +5,8 @@
 //   in-memory flag. The flag is set before any outgoing call; storage operations keep the object's
 //   input gate closed, so check-and-set is atomic. If the object restarts, the flag is gone and the
 //   user is not left locked out.
-// GlobalBudget (one instance per EVENT_ID): event-wide token total, registry of distinct users,
-//   and a per-IP window for newly created identities.
+// GlobalBudget (single instance): shared token budget over a rolling 24 hours (hourly buckets),
+//   known users, and a per-IP window for newly created identities.
 
 const HOUR_MS = 3600_000;
 
@@ -17,8 +17,7 @@ export function limits(env) {
     rateWindowMs: n("RATE_WINDOW_S", 30) * 1000,
     hourBytes: n("HOUR_BYTES", 10_000_000),
     hourTokens: n("HOUR_TOKENS", 1_500_000),
-    eventTokens: n("EVENT_TOKENS", 60_000_000),
-    maxUsers: n("MAX_USERS", 60),
+    dailyTokens: n("DAILY_TOKENS", 60_000_000), // all users together, rolling 24 h; 0 = no global cap
     newUsersPerIp: n("NEW_USERS_PER_IP", 60),
     newUsersWindowMs: n("NEW_USERS_WINDOW_S", 600) * 1000,
     maxOutputTokens: n("MAX_OUTPUT_TOKENS", 4096),
@@ -30,9 +29,8 @@ export function limits(env) {
   };
 }
 
-// One GlobalBudget per event: changing EVENT_ID starts a fresh user registry and token total.
 export function globalBudget(env) {
-  return env.GLOBAL.get(env.GLOBAL.idFromName("event:" + (env.EVENT_ID || "default")));
+  return env.GLOBAL.get(env.GLOBAL.idFromName("global"));
 }
 
 export function errorResponse(status, error, message, retryAfter) {
@@ -127,8 +125,8 @@ export class UserLimiter {
     try {
       if (job.kind === "llm") {
         const g = await (await global.fetch("https://global/check")).json();
-        if (g.tokens >= L.eventTokens) {
-          resp = errorResponse(503, "event_budget", "The event's shared token budget has been used up. Please tell the trainer.");
+        if (L.dailyTokens && g.tokens >= L.dailyTokens) {
+          resp = errorResponse(503, "daily_budget", "The shared daily usage budget for everyone has been used up. Please try again later.", g.retry_after);
         } else {
           resp = await this.llm(job, L, ev);
         }
@@ -218,33 +216,50 @@ export class GlobalBudget {
     this.env = env;
   }
 
+  // Tokens are kept in hourly buckets ("tok:<hour number>"); the budget covers the last 24 of them.
+  async tokens24h(now) {
+    const hour = Math.floor(now / HOUR_MS);
+    const buckets = await this.ctx.storage.list({ prefix: "tok:" });
+    let total = 0, oldest = null;
+    for (const [key, value] of buckets) {
+      const h = Number(key.slice(4));
+      if (h <= hour - 24) continue;
+      total += value;
+      if (oldest === null || h < oldest) oldest = h;
+    }
+    // When the budget is exhausted, capacity returns as the oldest counted hour drops out of the window.
+    const retryAfter = oldest === null ? 60 : Math.max(60, ((oldest + 24) * HOUR_MS - now) / 1000);
+    return { total, retryAfter, hour, buckets };
+  }
+
   async fetch(request) {
     const path = new URL(request.url).pathname;
     const L = limits(this.env);
     const storage = this.ctx.storage;
+    const now = Date.now();
     if (path === "/check") {
-      return Response.json({ tokens: (await storage.get("tokens")) || 0, users: (await storage.get("userCount")) || 0 });
+      const { total, retryAfter } = await this.tokens24h(now);
+      return Response.json({ tokens: total, retry_after: Math.ceil(retryAfter) });
     }
     if (path === "/add") {
       const { tokens } = await request.json();
-      await storage.put("tokens", ((await storage.get("tokens")) || 0) + (Number(tokens) || 0));
+      const { hour, buckets } = await this.tokens24h(now);
+      const stale = [...buckets.keys()].filter((k) => Number(k.slice(4)) <= hour - 24);
+      if (stale.length) await storage.delete(stale);
+      const key = "tok:" + hour;
+      await storage.put(key, (buckets.get(key) || 0) + (Number(tokens) || 0));
       return Response.json({ ok: true });
     }
     if (path === "/register") {
       const { sub, ip } = await request.json();
       if (await storage.get("user:" + sub)) return Response.json({ ok: true });
-      const count = (await storage.get("userCount")) || 0;
-      if (count >= L.maxUsers) {
-        return errorResponse(503, "max_users", `This event is limited to ${L.maxUsers} people and is full. Please contact the trainer.`);
-      }
-      const now = Date.now();
       const key = "ipnew:" + (ip || "unknown");
       const recent = ((await storage.get(key)) || []).filter((t) => t > now - L.newUsersWindowMs);
       if (recent.length >= L.newUsersPerIp) {
         return errorResponse(429, "login_rate", "Too many new sign-ins from this network. Please wait a few minutes.", (recent[0] + L.newUsersWindowMs - now) / 1000);
       }
       recent.push(now);
-      await storage.put({ [key]: recent, ["user:" + sub]: now, userCount: count + 1 });
+      await storage.put({ [key]: recent, ["user:" + sub]: now });
       return Response.json({ ok: true, new: true });
     }
     return new Response("Not found", { status: 404 });

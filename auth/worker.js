@@ -19,10 +19,8 @@
 //   SESSION_TTL      seconds (default 28800 = 8h)
 //   UPSTREAM         LLM API base (default https://lumen.ncsa.illinois.edu/v1)
 //   EMAIL_LOGIN      "true" to enable email sign-in (unverified identity; replace with CILogon)
-//   EVENT_ID         name of the event; a new value starts a fresh user registry and event token budget
-//   EVENT_ENDS       ISO date/time; no sessions are issued or accepted after it
 //   DENYLIST         comma-separated subs or emails to block
-//   Limits (see limiter.js): RATE_LIMIT, RATE_WINDOW_S, HOUR_BYTES, HOUR_TOKENS, EVENT_TOKENS, MAX_USERS, ...
+//   Limits (see limiter.js): RATE_LIMIT, RATE_WINDOW_S, HOUR_BYTES, HOUR_TOKENS, DAILY_TOKENS, NEW_USERS_PER_IP, ...
 //   secrets: SESSION_SECRET (random, >= 32 chars), <NAME>_CLIENT_SECRET per provider (optional,
 //            e.g. CILOGON_CLIENT_SECRET), LUMEN_API_KEY (optional)
 //
@@ -137,9 +135,8 @@ function config(env, selfOrigin) {
       rules: [{ claim: "idp", equals: "urn:mace:incommon:uiuc.edu", message: "only University of Illinois (Shibboleth) logins are accepted" }],
     };
   }
-  const eventEnds = env.EVENT_ENDS ? Math.floor(Date.parse(env.EVENT_ENDS) / 1000) : null;
   const denylist = new Set((env.DENYLIST || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
-  return { origins, providers, ttl: parseInt(env.SESSION_TTL || "28800"), eventEnds, denylist, emailLogin: env.EMAIL_LOGIN === "true" };
+  return { origins, providers, ttl: parseInt(env.SESSION_TTL || "28800"), denylist, emailLogin: env.EMAIL_LOGIN === "true" };
 }
 function corsHeaders(origin, cfg) {
   if (!cfg.origins.includes(origin)) return {};
@@ -218,7 +215,7 @@ async function callback(req, env, cfg, url) {
       email: claims.email || claims.eppn || claims.preferred_username || null,
       name: claims.name || [claims.given_name, claims.family_name].filter(Boolean).join(" ") || null,
       idp: claims.idp_name || claims.idp || claims.hd || claims.tid || null,
-      iat: t, exp: Math.min(t + cfg.ttl, cfg.eventEnds || Infinity),
+      iat: t, exp: t + cfg.ttl,
     };
     return redirectBack(tx.return_to, { session: await signToken(session, env.SESSION_SECRET) }, clear);
   } catch (e) {
@@ -230,7 +227,6 @@ const NETID_EMAIL = /^[a-z][a-z0-9]{1,7}@illinois\.edu$/;
 
 async function emailLogin(req, env, cfg) {
   if (!cfg.emailLogin) return errorResponse(404, "not_found", "Email sign-in is not enabled.");
-  if (cfg.eventEnds && now() >= cfg.eventEnds) return errorResponse(403, "forbidden", "This event has ended.");
   let email = "";
   try { email = String((await req.json()).email || "").trim().toLowerCase(); } catch {}
   if (!NETID_EMAIL.test(email)) return errorResponse(400, "bad_request", "Please enter your University of Illinois email address (netid@illinois.edu).");
@@ -239,7 +235,7 @@ async function emailLogin(req, env, cfg) {
   const reg = await globalBudget(env).fetch("https://global/register", { method: "POST", body: JSON.stringify({ sub, ip: req.headers.get("CF-Connecting-IP") || "" }) });
   if (!reg.ok) return reg;
   const t = now();
-  const session = { typ: "session", sub, provider: "email", email, name: null, idp: "unverified email", iat: t, exp: Math.min(t + 36000, cfg.eventEnds || Infinity) };
+  const session = { typ: "session", sub, provider: "email", email, name: null, idp: "unverified email", iat: t, exp: t + 36000 };
   return Response.json({ session: await signToken(session, env.SESSION_SECRET), user: { email, exp: session.exp } });
 }
 
@@ -325,7 +321,7 @@ export default {
       if (url.pathname === "/auth/email-login" && req.method === "POST") return withCors(await emailLogin(req, env, cfg), cors);
 
       const session = await sessionFrom(req, env);
-      if (!session || (cfg.eventEnds && now() >= cfg.eventEnds)) {
+      if (!session) {
         return withCors(errorResponse(401, "not_signed_in", "Please sign in (your session is missing or has expired)."), cors);
       }
       if (cfg.denylist.has(session.sub.toLowerCase()) || (session.email && cfg.denylist.has(session.email.toLowerCase()))) {

@@ -17,17 +17,15 @@ new_sqlite_classes = ["UserLimiter", "GlobalBudget"]
 
 [vars]
 EMAIL_LOGIN = "true"
-# Change EVENT_ID for each event: fresh user registry (MAX_USERS) and event token budget.
-EVENT_ID = "2026-pilot"
-# EVENT_ENDS = "2026-10-01T23:00:00-05:00"
 # DENYLIST = "email:someone@illinois.edu"
 # Limits (defaults shown; see limiter.js)
 RATE_LIMIT = "10"
 RATE_WINDOW_S = "30"
 HOUR_BYTES = "10000000"
 HOUR_TOKENS = "1500000"
-EVENT_TOKENS = "60000000"
-MAX_USERS = "60"
+# Shared by all users over a rolling 24 hours (cost safeguard); "0" disables it.
+DAILY_TOKENS = "60000000"
+NEW_USERS_PER_IP = "60"
 MAX_OUTPUT_TOKENS = "4096"
 ALLOWED_ORIGINS = "https://angrave.github.io,http://localhost:8000,http://127.0.0.1:8000"
 SESSION_TTL = "28800"

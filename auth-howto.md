@@ -80,8 +80,9 @@ The Worker is now a full gateway for the app (design and GLM review: [`auth-limi
   The Lumen key is added by the Worker; `max_tokens` is capped; streaming and bodies > 512 KB are refused.
 - **Per-user limits** (a Durable Object per user): one request at a time, 10 requests per 30 s,
   10 MB and 1.5 M tokens per rolling hour (tokens from Lumen's `usage`, or estimated as bytes ÷ 4).
-- **Event limits** (a Durable Object per `EVENT_ID`): 60 M tokens in total, 60 distinct users, 60 new sign-ins
-  per IP per 10 minutes. `EVENT_ENDS` and `DENYLIST` stop sessions.
+- **Shared safeguards** (a single Durable Object): 60 M tokens across all users over a rolling 24 hours
+  (`DAILY_TOKENS`, `0` to disable), and at most 60 new sign-ins per IP per 10 minutes. `DENYLIST` blocks accounts.
+  There are no events or end dates: people can use it any time.
 - **Web proxy:** private and local addresses are blocked (redirects included), downloads are capped at 5 MB, and
   they count toward the user's hourly bytes.
 - **App:** open `https://angrave.github.io/agentic/#gateway=https://agentic-auth.angrave.workers.dev&model=glm-5.3-flash`.
@@ -91,8 +92,8 @@ The Worker is now a full gateway for the app (design and GLM review: [`auth-limi
 ```
 cd auth
 npx wrangler secret delete MOCK_IDP_PRIVATE_JWK   # the simulated IdP must be off
-npx wrangler secret put LUMEN_API_KEY             # ideally a budget-capped key for the event
-# edit wrangler.toml: EVENT_ID (new per event), EVENT_ENDS, limits if needed; then:
+npx wrangler secret put LUMEN_API_KEY             # ideally a key with a spending cap
+# edit wrangler.toml limits if needed (e.g. DAILY_TOKENS); then:
 npx wrangler deploy
 ```
 Once that works, delete the old open proxy (`npx wrangler delete agentic-proxy`) so the limits can't be bypassed.
@@ -111,7 +112,7 @@ upstream requests. Browsers only ever hold their own session token.
 
 Layered, strongest first:
 
-1. **Budget-capped key upstream.** Ask the Lumen admins for a dedicated key for the training event with a
+1. **Budget-capped key upstream.** Ask the Lumen admins for a dedicated key for this service with a
    spending limit and expiry (Lumen reports per-model costs, which suggests a LiteLLM-style gateway that
    supports per-key budgets; *unverified*, so ask). The cap still holds if everything else fails.
 2. **Authentication.** Without an Illinois login there is no session token; a script that finds the Worker
@@ -119,15 +120,14 @@ Layered, strongest first:
    on its own.
 3. **Per-user quotas in the Worker** (implemented; see above. Original proposal:)
    - A **Durable Object per user** (keyed by the session `sub`, i.e. the NetID) that records the
-     `usage.total_tokens` the Worker sees in each response, and refuses with `429` once a daily or event budget is
+     `usage.total_tokens` the Worker sees in each response, and refuses with `429` once an hourly budget is
      reached. Durable Objects give strongly consistent counters and are on the Workers free plan.
      KV is not suitable: eventually consistent, with 1,000 writes/day on the free plan.
    - The Workers **Rate Limiting binding** for requests per minute per user (cheap burst protection).
-   - A **global budget** counter as a kill switch for the whole event.
+   - A **global budget** counter (rolling 24 hours) as a kill switch for the whole service.
 4. **Request hygiene in the Worker:** allowlist of models, cap `max_tokens`, cap request body size and number
    of messages, reject streaming if not needed.
-5. **Short sessions and revocation:** e.g. 8-hour tokens, an `EVENT_ENDS` date after which no sessions are
-   issued, and a denylist of `sub`s to block a misbehaving account immediately.
+5. **Short sessions and revocation:** e.g. 8-hour tokens, and a denylist of `sub`s to block a misbehaving account.
 6. **Visibility:** log `sub`, model and tokens per request (Workers Logs) so heavy users are visible.
 
 ## Testing

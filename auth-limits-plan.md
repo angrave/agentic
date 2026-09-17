@@ -197,3 +197,11 @@ Revised limits: `MAX_CONCURRENT=1`, `RATE_LIMIT=10/30s` (all requests), `HOUR_BY
   `too_large` 413, `bad_request` 400, `not_found` 404, `upstream_timeout` 504, `upstream_error` 502.
 - Success headers: `X-Usage-Hour-Bytes`, `X-Usage-Hour-Tokens`, `X-Limit-Hour-Bytes`, `X-Limit-Hour-Tokens`
   (exposed to the page via `Access-Control-Expose-Headers`, together with `Retry-After`).
+
+## 10. Change (user, 2026-09-17): no events — always available
+
+People should be able to use the service at any time, so the event concept is removed:
+`EVENT_ID`, `EVENT_ENDS`, `MAX_USERS` and the event token total are gone.
+They are replaced by **`DAILY_TOKENS`**, a budget shared by all users over a **rolling 24 hours** (hourly buckets
+in the `GlobalBudget` Durable Object; `503 daily_budget` with `retry_after` when exhausted; `0` disables it).
+Per-user limits, the per-IP new-sign-in window and `DENYLIST` are unchanged.

@@ -1,6 +1,6 @@
 // Gateway limits test. Starts a mock Lumen upstream and `wrangler dev` with small limits, then checks
 // sign-in, route allowlist, request hygiene, concurrency, rate, hourly bytes/tokens, token estimation,
-// web proxy protections, event budget and new-user caps.
+// web proxy protections, shared daily budget and new-sign-in caps.
 // Run: cd tests && node limits.mjs   (needs npx wrangler; no Cloudflare account needed for dev)
 import http from "node:http";
 import { spawn } from "node:child_process";
@@ -38,7 +38,7 @@ const envFile = path.join(AUTH_DIR, ".dev.vars.limits-test");
 fs.writeFileSync(envFile, `SESSION_SECRET="${"s".repeat(40)}"\nLUMEN_API_KEY="upstream-test-key"\n`);
 const vars = {
   UPSTREAM: "http://localhost:9911/v1", RATE_LIMIT: "4", RATE_WINDOW_S: "20", HOUR_BYTES: "300000", HOUR_TOKENS: "20000",
-  EVENT_TOKENS: "60000", MAX_USERS: "16", NEW_USERS_PER_IP: "14", MAX_BODY_BYTES: "100000", PROXY_MAX_BYTES: "10000",
+  DAILY_TOKENS: "60000", NEW_USERS_PER_IP: "14", MAX_BODY_BYTES: "100000", PROXY_MAX_BYTES: "10000",
   MAX_OUTPUT_TOKENS: "100", UPSTREAM_TIMEOUT_MS: "3000", DENYLIST: "email:blocked@illinois.edu", ALLOWED_ORIGINS: ORIGIN, EMAIL_LOGIN: "true",
 };
 const args = ["wrangler", "dev", "--port", "8788", "--ip", "127.0.0.1", "--env-file", envFile, "--persist-to", fs.mkdtempSync("/tmp/limits-"), ...Object.entries(vars).flatMap(([k, v]) => ["--var", `${k}:${v}`])];
@@ -146,30 +146,24 @@ try {
   r = await call("/proxy?url=" + encodeURIComponent("https://raw.githubusercontent.com/mwaskom/seaborn-data/master/penguins.csv"), { token: px });
   expect(r.status === 413, "proxy download over size cap → 413", r.status);
 
-  // --- event budget (global) ---
-  const ev = await token("aevent");
+  // --- shared rolling 24 h budget ---
+  const ev = await token("adaily");
   r = await chat(ev, "tokens:40000");
-  expect(r.status === 200, "big request pushes event total over budget", r.status);
+  expect(r.status === 200, "big request pushes the shared 24 h total over budget", r.status);
   r = await chat(misc, "hi"); j = await r.json();
-  expect(r.status === 503 && j.error === "event_budget", "any user → 503 event_budget afterwards", JSON.stringify(j));
+  expect(r.status === 503 && j.error === "daily_budget" && j.retry_after >= 60, "any user → 503 daily_budget with retry_after", JSON.stringify(j));
   r = await call("/proxy?url=" + encodeURIComponent("https://example.com/"), { token: px });
   expect(r.status === 200, "web proxy still works after LLM budget is used up", r.status);
 
-  // --- new identities: per-IP window and event cap ---
-  let n = 10; // users created so far from 10.1.1.1 (misc, conc×2, timeout, rate, bytes, tokens, estim, proxy, event)
+  // --- new identities: per-IP window (no overall user cap) ---
   const re = await login("amisc@illinois.edu");
   expect(re.r.status === 200, "re-login of an existing user doesn't count as new", re.r.status);
   const statuses = [];
   for (let i = 0; i < 5; i++) statuses.push((await login(`anew${i}@illinois.edu`, "10.1.1.1")).r.status);
-  expect(statuses.slice(0, 4).every(s => s === 200) && statuses[4] === 429, `per-IP new identities capped at 14 per window`, statuses.join(","));
-  const other = [];
-  for (let i = 0; i < 3; i++) other.push(await login(`bnew${i}@illinois.edu`, "10.2.2.2"));
-  const ipHonoured = other[0].r.status === 200;
-  if (ipHonoured) {
-    expect(other[0].r.status === 200 && other[1].r.status === 200 && other[2].r.status === 503 && other[2].j.error === "max_users", "event capped at 16 distinct users", other.map(o => o.r.status).join(","));
-  } else {
-    console.log("skip - max_users check (local dev ignores CF-Connecting-IP; per-IP window blocked first: " + other[0].r.status + ")");
-  }
+  expect(statuses.slice(0, 4).every(s => s === 200) && statuses[4] === 429, "new sign-ins per IP capped at 14 per window", statuses.join(","));
+  const other = await login("bnew0@illinois.edu", "10.2.2.2");
+  if (other.r.status === 200) expect(true, "sign-ins from another network are unaffected");
+  else console.log("skip - other-network check (local dev ignores CF-Connecting-IP)");
 } catch (e) {
   failed++; console.log("FAIL - exception:", e.stack);
 } finally {
