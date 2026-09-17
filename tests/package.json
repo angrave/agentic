@@ -1,6 +1,6 @@
 {
   "type": "module",
   "license": "MIT",
-  "scripts": { "test": "node e2e.mjs && node stop.mjs && node a11y.mjs && node gateway-app.mjs" },
+  "scripts": { "test": "node e2e.mjs && node stop.mjs && node a11y.mjs && node gateway-app.mjs && node webaccess.mjs" },
   "devDependencies": { "playwright": "*", "@axe-core/playwright": "*" }
 }

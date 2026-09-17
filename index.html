@@ -21,8 +21,10 @@
   #pystatus { margin-left: auto; font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
   .dot { width: 9px; height: 9px; border-radius: 50%; background: #c9a227; display: inline-block; }
   .dot.ready { background: var(--ok); } .dot.err { background: var(--err); }
-  main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; height: calc(100% - 50px); }
-  @media (max-width: 860px) { main { grid-template-columns: minmax(0, 1fr); height: auto; } #pystatus { margin-left: 0; } #side { border-left: 0; border-top: 1px solid var(--line); } #chatcol { height: 80vh; } }
+  body { display: flex; flex-direction: column; }
+  header, footer { flex: none; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; flex: 1; min-height: 0; }
+  @media (max-width: 860px) { body { display: block; height: auto; } main { grid-template-columns: minmax(0, 1fr); height: auto; } #pystatus { margin-left: 0; } #side { border-left: 0; border-top: 1px solid var(--line); } #chatcol { height: 80vh; } }
   #chatcol { display: flex; flex-direction: column; min-height: 0; }
   #chat { flex: 1; overflow-y: auto; padding: 16px 20px; overflow-wrap: anywhere; }
   #side { border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; padding: 12px 14px; }
@@ -78,6 +80,16 @@
   #rawdlg pre { flex: 1; margin: 0; border-radius: 0; overflow: auto; white-space: pre-wrap; }
   .empty { max-width: 640px; margin: 40px auto; color: var(--muted); }
   .empty h2 { color: var(--ink); margin-bottom: 4px; font-size: 17px; text-transform: none; letter-spacing: 0; }
+  footer { font-size: 11.5px; color: var(--muted); background: var(--panel); border-top: 1px solid var(--line); padding: 4px 16px; text-align: center; }
+  footer p { margin: 0; }
+  .switch { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; user-select: none; }
+  .switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .switch .track { position: relative; width: 36px; height: 20px; border-radius: 999px; background: #c3c9d4; border: 1px solid var(--ctl); flex: none; transition: background .15s; }
+  .switch .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 1px solid var(--ctl); transition: left .15s; }
+  .switch input:checked + .track { background: var(--accent); border-color: var(--accent); }
+  .switch input:checked + .track::after { left: 18px; border-color: var(--accent); }
+  .switch input:focus-visible + .track { outline: 3px solid var(--accent); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { .switch .track, .switch .track::after { transition: none; } }
   /* Accessibility helpers */
   .sr-only { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
   .skip { position: absolute; left: 8px; top: -40px; background: var(--accent); color: #fff; padding: 6px 10px; border-radius: 6px; z-index: 10; }
@@ -107,6 +119,11 @@
   <p class="sub" style="margin:0">An AI agent with Python, files &amp; the web — running in your browser</p>
   <p id="pystatus" role="status" style="margin-block:0"><span class="dot" id="pydot" aria-hidden="true"></span><span id="pytext">Loading Python…</span></p>
   <p id="gwstatus" hidden><span id="gwuser"></span><button type="button" id="gwbtn"></button></p>
+  <label class="switch" for="webaccess" title="When off, the agent can only use the AI model and in-browser Python and files: no web search, downloads or internet access from Python.">
+    <input type="checkbox" role="switch" id="webaccess" checked aria-describedby="webaccess-hint">
+    <span class="track" aria-hidden="true"></span><span>Allow web access</span>
+  </label>
+  <span id="webaccess-hint" class="sr-only">When off, the agent can only use the AI model and in-browser Python and files.</span>
 </header>
 <main>
   <section id="chatcol" aria-labelledby="chat-heading">
@@ -181,6 +198,9 @@
     </details>
   </aside>
 </main>
+<footer>
+  <p>This page uses AI Models hosted at the University of Illinois. Per-person AI limits: one request at a time, 10 requests per 30 s, 10 MB and 1.5M tokens per rolling hour.</p>
+</footer>
 <dialog id="rawdlg" aria-labelledby="rawdlg-title"><div class="inner">
   <div class="top"><h2 id="rawdlg-title" style="margin:0;font-size:15px;text-transform:none;letter-spacing:0;color:var(--ink)">Raw messages sent to the model (this is all the model "sees")</h2><button id="closeraw">Close</button></div>
   <pre id="rawpre" tabindex="0" aria-labelledby="rawdlg-title"></pre>
@@ -201,6 +221,26 @@
 <!-- ======================= Python worker ======================= -->
 <script id="worker-src" type="text/js-worker">
 const PYODIDE_URL = "https://cdn.jsdelivr.net/pyodide/v0.27.7/full/";
+
+// "Allow web access" switch: when off, Python's network access is limited to the package servers
+// Pyodide and micropip need. (A training control, not a security sandbox.)
+let webAllowed = true;
+const PACKAGE_HOSTS = ["cdn.jsdelivr.net", "pypi.org", "files.pythonhosted.org"];
+const WEB_OFF = "Web access is turned off on this page (the 'Allow web access' switch at the top right).";
+function netAllowed(url) {
+  try { return webAllowed || PACKAGE_HOSTS.includes(new URL(String(url), self.location.href).hostname); } catch { return false; }
+}
+const realFetch = self.fetch.bind(self);
+self.fetch = (input, init) => netAllowed(input && input.url ? input.url : input) ? realFetch(input, init) : Promise.reject(new TypeError(WEB_OFF));
+const realOpen = XMLHttpRequest.prototype.open;
+XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+  if (!netAllowed(url)) throw new DOMException(WEB_OFF, "SecurityError");
+  return realOpen.call(this, method, url, ...rest);
+};
+if (self.WebSocket) {
+  const RealWebSocket = self.WebSocket;
+  self.WebSocket = function (url, protocols) { if (!webAllowed) throw new DOMException(WEB_OFF, "SecurityError"); return new RealWebSocket(url, protocols); };
+}
 importScripts(PYODIDE_URL + "pyodide.js");
 const WORK = "/home/pyodide/work";
 let py = null, out = [];
@@ -344,12 +384,13 @@ const handlers = {
   },
   read({ path }) { return py.FS.readFile(ns.get("_safe")(path)); },
   remove({ path }) { py.FS.unlink(ns.get("_safe")(path)); return true; },
+  setweb({ allowed }) { webAllowed = !!allowed; return webAllowed; },
 };
 
 self.onmessage = async (ev) => {
   const { id, cmd, args } = ev.data;
   try {
-    await ready;
+    if (cmd !== "setweb") await ready;
     const value = await handlers[cmd](args || {});
     self.postMessage({ id, ok: true, value });
   } catch (e) {
@@ -500,6 +541,7 @@ function startWorker() {
   setPy("Loading Python…", "");
   const blob = new Blob([$("worker-src").textContent], { type: "text/javascript" });
   worker = new Worker(URL.createObjectURL(blob));
+  rpc("setweb", { allowed: webAllowed }); // handled before Python finishes loading
   worker.onmessage = ev => {
     const m = ev.data;
     if (m.type === "status") return setPy(m.text, "");
@@ -592,7 +634,10 @@ const TOOLS = [
   { name: "fetch_url", description: "Download a URL. Web pages are returned as readable text. If save_as is given (or the URL is a data/document file such as .csv, .xlsx, .json, .pdf, .docx), the content is saved into the working folder so Python can use it.",
     parameters: { type: "object", properties: { url: { type: "string" }, save_as: { type: "string", description: "Optional filename to save into the working folder" } }, required: ["url"] } },
 ];
-const TOOL_DEFS = TOOLS.map(t => ({ type: "function", function: t }));
+const WEB_TOOLS = ["web_search", "fetch_url"];
+let webAllowed = true;
+const activeToolDefs = () => TOOLS.filter(t => webAllowed || !WEB_TOOLS.includes(t.name)).map(t => ({ type: "function", function: t }));
+const WEB_OFF_ERROR = "Web access is turned off on this page. The user can turn on the 'Allow web access' switch at the top right.";
 
 function truncate(s, n = TOOL_RESULT_LIMIT) {
   s = String(s ?? "");
@@ -664,6 +709,7 @@ const executors = {
     return `Wrote ${String(content ?? "").length} characters to ${path}`;
   },
   async web_search({ query, max_results }, ctx) {
+    if (!webAllowed) throw new Error(WEB_OFF_ERROR);
     if (!query) throw new Error("Missing 'query'");
     const n = Math.min(max_results || 8, 20);
     let results, provider = settings.searchprov;
@@ -681,6 +727,7 @@ const executors = {
     return `Search results (${provider}) for "${query}":\n\n` + results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`).join("\n");
   },
   async fetch_url({ url, save_as }, ctx) {
+    if (!webAllowed) throw new Error(WEB_OFF_ERROR);
     if (!/^https?:\/\//i.test(url || "")) throw new Error("url must start with http:// or https://");
     const pathName = new URL(url).pathname;
     const dataExt = /\.(csv|tsv|xlsx|xls|xlsm|json|pdf|docx|pptx|zip|parquet|txt|png|jpe?g|gif|xml)$/i;
@@ -819,13 +866,15 @@ async function finishToolCard(card, result, ms, ok, images) {
 // ---------------- Agent loop ----------------
 function systemPrompt() {
   return `You are a helpful data assistant working inside a web browser for a training session.
-You can act by calling tools: run_python (Pyodide with pandas, openpyxl, python-docx, matplotlib), list_files, read_file, write_file, web_search, fetch_url.
+You can act by calling tools: run_python (Pyodide with pandas, openpyxl, python-docx, matplotlib), list_files, read_file, write_file${webAllowed ? ", web_search, fetch_url" : ""}.
 The user's files live in the current working folder (${"/home/pyodide/work"}); use relative filenames.
 Guidelines:
 - Look before you act: use list_files / read_file to understand files before processing them.
 - Do real work with tools instead of guessing. Check tool results; if something fails, read the error and try a fix.
 - Save outputs the user asked for (Excel, CSV, Word, charts) as files in the working folder and tell the user the filenames.
-- Python has no direct internet access; use fetch_url to download data first, then read the saved file in Python.
+${webAllowed
+  ? "- Python has no direct internet access; use fetch_url to download data first, then read the saved file in Python."
+  : "- Web access is turned OFF: you cannot search the web or download anything, and Python has no internet access. If the user asks for something from the web, explain that they can turn on the 'Allow web access' switch at the top right of the page."}
 - Keep printed output small (e.g. df.head()), not whole large tables.
 - When finished, give a short, clear answer in Markdown. Today's date is ${new Date().toDateString()}.`;
 }
@@ -890,7 +939,7 @@ async function countdown(seconds, message, signal) {
 }
 
 async function callModel(signal) {
-  const body = JSON.stringify({ model: settings.model, messages: compactHistory(), tools: TOOL_DEFS, tool_choice: "auto" });
+  const body = JSON.stringify({ model: settings.model, messages: compactHistory(), tools: activeToolDefs(), tool_choice: "auto" });
   let resp, text;
   for (let attempt = 0; ; attempt++) {
     resp = await gfetch(base() + "/chat/completions", {
@@ -1091,8 +1140,26 @@ d.save("planning_memo.docx")
 print("ok")
 `;
 
+function setWebAccess(allowed, announceChange) {
+  webAllowed = allowed;
+  $("webaccess").checked = allowed;
+  lsSet("acl_webaccess", allowed ? "on" : "off");
+  if (messages[0]?.role === "system") messages[0].content = systemPrompt(); // applies to the next request
+  if (worker) rpc("setweb", { allowed }).catch(() => {});
+  if (announceChange) {
+    note(allowed
+      ? "Web access turned on: the agent can search the web and download data."
+      : "Web access turned off: the agent can only use the AI model and in-browser Python and files.");
+  }
+}
+
 function init() {
+  const webParam = new URLSearchParams(location.hash.slice(1)).get("web"); // setup links may include web=off
   loadSettings();
+  if (webParam === "on" || webParam === "off") lsSet("acl_webaccess", webParam);
+  webAllowed = lsGet("acl_webaccess") !== "off";
+  $("webaccess").checked = webAllowed;
+  $("webaccess").addEventListener("change", () => setWebAccess($("webaccess").checked, true));
   initChips();
   resetChat();
   startWorker();
@@ -1133,7 +1200,7 @@ function init() {
   };
   $("clear").onclick = () => { if (!busy) { resetChat(); $("stepinfo").textContent = ""; } };
   $("restartpy").onclick = () => { if (busy) abortCtl?.abort(); restartWorker(); note("Python restarted (variables cleared; uploaded and downloaded files restored)."); };
-  $("showraw").onclick = () => { $("rawpre").textContent = JSON.stringify({ model: settings.model, tools: TOOL_DEFS, messages }, null, 2); $("rawdlg").showModal(); };
+  $("showraw").onclick = () => { $("rawpre").textContent = JSON.stringify({ model: settings.model, tools: activeToolDefs(), messages }, null, 2); $("rawdlg").showModal(); };
   $("closeraw").onclick = () => $("rawdlg").close();
   $("loadmodels").onclick = async () => {
     try {
