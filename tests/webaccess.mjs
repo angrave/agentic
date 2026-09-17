@@ -42,7 +42,9 @@ try {
   expect(await sw.isChecked(), "switch is on by default");
 
   await ask("hi", [{ content: "hello" }]);
-  expect(reqs.at(-1).tools.length === 6, "web on: 6 tools sent", reqs.at(-1).tools.length);
+  const userMsgs = (req) => req.messages.filter(m => m.role === "user").map(m => m.content);
+  expect(reqs.at(-1).tools.length === 6, "6 tools sent", reqs.at(-1).tools.length);
+  expect(userMsgs(reqs.at(-1))[0].startsWith("[Page note: web access is currently ON"), "first message carries a 'currently ON' note", userMsgs(reqs.at(-1))[0]);
 
   await sw.focus(); await p.keyboard.press("Space");
   expect(!(await sw.isChecked()), "switch toggles off with the keyboard");
@@ -55,9 +57,9 @@ try {
     { content: "ok" },
   ]);
   const offReq = reqs.at(-4);
-  const names = offReq.tools.map(t => t.function.name);
-  expect(names.length === 4 && !names.includes("web_search") && !names.includes("fetch_url"), "web off: web tools not offered", names.join(","));
-  expect(offReq.messages[0].content.includes("Web access is turned OFF"), "web off: system prompt says so");
+  expect(offReq.tools.length === 6, "tool list unchanged when web is off (cache-friendly)", offReq.tools.length);
+  expect(userMsgs(offReq).at(-1).startsWith("[Page note: the user has turned web access OFF") && userMsgs(offReq).at(-1).endsWith("get example.com"), "message after switching off carries an OFF note", userMsgs(offReq).at(-1));
+  expect(userMsgs(offReq)[0].includes("currently ON"), "earlier history is not rewritten", userMsgs(offReq)[0]);
   const res = await p.locator(".tool .res").allTextContents();
   expect(res.at(-3).startsWith("ERROR: Web access is turned off"), "fetch_url refused even if the model calls it", res.at(-3));
   expect(/BLOCKED:.*Web access is turned off/.test(res.at(-2)), "Python network access blocked", res.at(-2));
@@ -69,6 +71,7 @@ try {
     { content: "ok" },
   ]);
   expect(/Web access is turned off/.test(await lastTool()), "still blocked after Python restart", await lastTool());
+  expect(userMsgs(reqs.at(-2)).at(-1) === "again", "no note when the state hasn't changed", userMsgs(reqs.at(-2)).at(-1));
 
   await p.reload(); await ready();
   expect(!(await p.getByRole("switch", { name: "Allow web access" }).isChecked()), "off setting remembered after reload");
@@ -80,7 +83,16 @@ try {
     { content: "ok" },
   ]);
   const onRes = await lastTool();
-  expect(reqs.at(-2).tools.length === 6 && !/turned off/.test(onRes), "web on again: tools restored and no block message", onRes);
+  expect(!/turned off/.test(onRes), "web on again: Python no longer blocked", onRes);
+  expect(userMsgs(reqs.at(-2)).at(-1).startsWith("[Page note: web access is currently ON"), "after reload (new conversation) the first message gets a fresh note", userMsgs(reqs.at(-2)).at(-1));
+  await p.locator("label.switch").click(); await p.locator("label.switch").click();
+  await ask("flip", [{ content: "ok" }]);
+  expect(userMsgs(reqs.at(-1)).at(-1) === "flip", "off-then-on before sending → no note", userMsgs(reqs.at(-1)).at(-1));
+  await p.click("#clear");
+  await ask("fresh", [{ content: "ok" }]);
+  expect(userMsgs(reqs.at(-1)).length === 1 && userMsgs(reqs.at(-1))[0].startsWith("[Page note: web access is currently ON"), "New chat → first message gets a note again", userMsgs(reqs.at(-1))[0]);
+  const prompts = new Set(reqs.map(r => r.messages[0].content)), toolSets = new Set(reqs.map(r => JSON.stringify(r.tools)));
+  expect(prompts.size === 1 && toolSets.size === 1, "system prompt and tool list byte-identical in every request", `${prompts.size} prompts, ${toolSets.size} tool lists`);
 
   const axe = await new AxeBuilder({ page: p }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"]).analyze();
   expect(axe.violations.length === 0, "axe: 0 violations with switch and footer", axe.violations.map(v => v.id + ": " + v.nodes.map(n => n.target).join(" ")).join("; "));

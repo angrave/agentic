@@ -634,9 +634,19 @@ const TOOLS = [
   { name: "fetch_url", description: "Download a URL. Web pages are returned as readable text. If save_as is given (or the URL is a data/document file such as .csv, .xlsx, .json, .pdf, .docx), the content is saved into the working folder so Python can use it.",
     parameters: { type: "object", properties: { url: { type: "string" }, save_as: { type: "string", description: "Optional filename to save into the working folder" } }, required: ["url"] } },
 ];
-const WEB_TOOLS = ["web_search", "fetch_url"];
 let webAllowed = true;
-const activeToolDefs = () => TOOLS.filter(t => webAllowed || !WEB_TOOLS.includes(t.name)).map(t => ({ type: "function", function: t }));
+// The system prompt and tool list never change during a conversation (so provider prompt caching keeps working).
+// The switch state reaches the model as a short note in the user's message: first message, and after each change.
+const TOOL_DEFS = TOOLS.map(t => ({ type: "function", function: t }));
+let webStateSent = null; // web access state the model was last told about in this conversation (null = not yet)
+function webStateNote() {
+  if (webStateSent === webAllowed) return "";
+  const first = webStateSent === null;
+  const state = webAllowed
+    ? "ON: web_search and fetch_url can be used."
+    : "OFF: web_search and fetch_url will be refused and Python has no internet access. If the user needs something from the web, tell them to turn on the 'Allow web access' switch at the top right of the page.";
+  return `[Page note: ${first ? "web access is currently" : "the user has turned web access"} ${state}]\n\n`;
+}
 const WEB_OFF_ERROR = "Web access is turned off on this page. The user can turn on the 'Allow web access' switch at the top right.";
 
 function truncate(s, n = TOOL_RESULT_LIMIT) {
@@ -866,15 +876,14 @@ async function finishToolCard(card, result, ms, ok, images) {
 // ---------------- Agent loop ----------------
 function systemPrompt() {
   return `You are a helpful data assistant working inside a web browser for a training session.
-You can act by calling tools: run_python (Pyodide with pandas, openpyxl, python-docx, matplotlib), list_files, read_file, write_file${webAllowed ? ", web_search, fetch_url" : ""}.
+You can act by calling tools: run_python (Pyodide with pandas, openpyxl, python-docx, matplotlib), list_files, read_file, write_file, web_search, fetch_url.
 The user's files live in the current working folder (${"/home/pyodide/work"}); use relative filenames.
 Guidelines:
 - Look before you act: use list_files / read_file to understand files before processing them.
 - Do real work with tools instead of guessing. Check tool results; if something fails, read the error and try a fix.
 - Save outputs the user asked for (Excel, CSV, Word, charts) as files in the working folder and tell the user the filenames.
-${webAllowed
-  ? "- Python has no direct internet access; use fetch_url to download data first, then read the saved file in Python."
-  : "- Web access is turned OFF: you cannot search the web or download anything, and Python has no internet access. If the user asks for something from the web, explain that they can turn on the 'Allow web access' switch at the top right of the page."}
+- Python has no direct internet access; use fetch_url to download data first, then read the saved file in Python.
+- The user can turn web access on or off at any time. "[Page note: ...]" lines at the start of user messages tell you the current state; the most recent note is the one that applies.
 - Keep printed output small (e.g. df.head()), not whole large tables.
 - When finished, give a short, clear answer in Markdown. Today's date is ${new Date().toDateString()}.`;
 }
@@ -883,6 +892,7 @@ let messages = [];
 let abortCtl = null;
 function resetChat() {
   messages = [{ role: "system", content: systemPrompt() }];
+  webStateSent = null; // a new conversation starts with a fresh note
   chatEl.innerHTML = INTRO_HTML;
 }
 
@@ -939,7 +949,7 @@ async function countdown(seconds, message, signal) {
 }
 
 async function callModel(signal) {
-  const body = JSON.stringify({ model: settings.model, messages: compactHistory(), tools: activeToolDefs(), tool_choice: "auto" });
+  const body = JSON.stringify({ model: settings.model, messages: compactHistory(), tools: TOOL_DEFS, tool_choice: "auto" });
   let resp, text;
   for (let attempt = 0; ; attempt++) {
     resp = await gfetch(base() + "/chat/completions", {
@@ -987,7 +997,9 @@ async function runAgent(userText) {
   if (!gw() && !settings.model) { note("Please choose a model in Settings first (click “Load model list”).", true); return; }
   if (!gw() && !settings.apikey) note("No API key set — the request will probably be rejected. Enter a key in Settings.", true);
   addMsg("user", userText);
-  messages.push({ role: "user", content: userText });
+  const previousWebState = webStateSent;
+  messages.push({ role: "user", content: webStateNote() + userText });
+  webStateSent = webAllowed;
   setBusy(true);
   abortCtl = new AbortController();
   const signal = abortCtl.signal;
@@ -1062,6 +1074,7 @@ async function runAgent(userText) {
       for (const tc of lastAsst.tool_calls) if (!answered.has(tc.id)) messages.push({ role: "tool", tool_call_id: tc.id, content: "Interrupted." });
     } else if (last?.role === "user") {
       messages.pop(); // failed before the model answered; allow retry
+      webStateSent = previousWebState; // the note was never delivered
       if (e.signedOut && !$("input").value) $("input").value = userText; // ready to resend after signing in
     }
   } finally {
@@ -1144,7 +1157,6 @@ function setWebAccess(allowed, announceChange) {
   webAllowed = allowed;
   $("webaccess").checked = allowed;
   lsSet("acl_webaccess", allowed ? "on" : "off");
-  if (messages[0]?.role === "system") messages[0].content = systemPrompt(); // applies to the next request
   if (worker) rpc("setweb", { allowed }).catch(() => {});
   if (announceChange) {
     note(allowed
@@ -1200,7 +1212,7 @@ function init() {
   };
   $("clear").onclick = () => { if (!busy) { resetChat(); $("stepinfo").textContent = ""; } };
   $("restartpy").onclick = () => { if (busy) abortCtl?.abort(); restartWorker(); note("Python restarted (variables cleared; uploaded and downloaded files restored)."); };
-  $("showraw").onclick = () => { $("rawpre").textContent = JSON.stringify({ model: settings.model, tools: activeToolDefs(), messages }, null, 2); $("rawdlg").showModal(); };
+  $("showraw").onclick = () => { $("rawpre").textContent = JSON.stringify({ model: settings.model, tools: TOOL_DEFS, messages }, null, 2); $("rawdlg").showModal(); };
   $("closeraw").onclick = () => $("rawdlg").close();
   $("loadmodels").onclick = async () => {
     try {
