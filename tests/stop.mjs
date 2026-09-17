@@ -1,7 +1,7 @@
 import http from "node:http"; import fs from "node:fs"; import { chromium } from "playwright";
 const reqs = [];
 const tc = (code) => ({ id: "c" + reqs.length, type: "function", function: { name: "run_python", arguments: JSON.stringify({ code }) } });
-const S = [() => ({ content: "", tool_calls: [tc("import pandas as pd\npd.DataFrame({'a':[1,2]})")] }), () => ({ content: "", tool_calls: [tc("while True:\n    pass")] }), () => ({ content: "after stop ok" })];
+const S = [() => ({ content: "", tool_calls: [tc("import pandas as pd\nimport matplotlib.pyplot as plt\nplt.plot([1, 2])\nplt.savefig('mine.png')\npd.DataFrame({'a':[1,2]})")] }), () => ({ content: "", tool_calls: [tc("while True:\n    pass")] }), () => ({ content: "after stop ok" })];
 const srv = http.createServer(async (q, r) => {
   if (q.url.startsWith("/v1/chat")) { let b = ""; for await (const c of q) b += c; reqs.push(JSON.parse(b)); const m = S[Math.min(reqs.length - 1, 2)]();
     r.writeHead(200, { "Content-Type": "application/json" }); return r.end(JSON.stringify({ choices: [{ message: { role: "assistant", ...m } }] })); }
@@ -20,6 +20,7 @@ await p.click("#stop");
 await p.waitForFunction(() => document.body.innerText.includes("Stopped by user"), null, { timeout: 10000 });
 const res1 = await p.locator(".tool .res").first().textContent();
 console.log(res1.includes("a") && !res1.includes("ERROR") ? "ok  - DataFrame repr: " + JSON.stringify(res1) : "FAIL DataFrame repr: " + res1);
+console.log(res1.includes("Files created/changed: mine.png") && !res1.includes("figure_") && await p.locator(".figures img").count() === 1 ? "ok  - chart saved by code is not duplicated by auto-capture" : "FAIL duplicate chart: " + res1);
 await ready(); console.log("ok  - stop killed runaway python and it restarted");
 await p.fill("#input", "again"); await p.press("#input", "Enter");
 await p.waitForFunction(() => document.body.innerText.includes("after stop ok"), null, { timeout: 30000 });

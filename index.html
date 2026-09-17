@@ -45,6 +45,20 @@
   .tool .body { padding: 0 10px 8px; }
   .tool .label { font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
   .tool img { max-width: 100%; background: #fff; border: 1px solid var(--line); border-radius: 6px; margin-top: 6px; }
+  .steps { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; margin: 6px auto; max-width: 900px; }
+  .steps > summary { cursor: pointer; padding: 6px 10px; font-size: 13px; display: flex; gap: 8px; align-items: center; list-style: none; }
+  .steps > summary::-webkit-details-marker { display: none; }
+  .steps > summary::before { content: "▸"; color: var(--muted); }
+  .steps[open] > summary::before { content: "▾"; }
+  .steps > summary .gtitle { font-weight: 600; white-space: nowrap; }
+  .steps > summary .gdetail { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+  .steps > .sbody { padding: 0 8px 8px; }
+  .steps .tool, .steps .think, .steps .msg { max-width: none; }
+  .steps .msg.interim .bubble { background: var(--bg); font-size: 13px; padding: 6px 10px; }
+  .figures { max-width: 900px; margin: 6px auto; display: flex; flex-wrap: wrap; gap: 8px; }
+  .figures figure { margin: 0; flex: 1 1 280px; max-width: 100%; }
+  .figures img { max-width: 100%; background: #fff; border: 1px solid var(--line); border-radius: 6px; display: block; }
+  .figures figcaption { font-size: 12px; color: var(--muted); margin-top: 2px; }
   .think { font-size: 12.5px; color: var(--muted); max-width: 900px; margin: 4px auto; }
   .think pre { background: transparent; border-left: 3px solid var(--line); border-radius: 0; }
   .note { text-align: center; color: var(--muted); font-size: 12.5px; margin: 8px auto; max-width: 900px; }
@@ -315,11 +329,11 @@ def _preview(path, max_chars=6000):
 def _repr(o):
     return repr(o)
 
-def _save_figures():
+def _save_figures(save=True):
     saved = []
     if "matplotlib.pyplot" in sys.modules:
         import matplotlib.pyplot as plt
-        for num in plt.get_fignums():
+        for num in (plt.get_fignums() if save else []):
             i = 1
             while os.path.exists(os.path.join(WORK, "figure_%d.png" % i)):
                 i += 1
@@ -369,8 +383,11 @@ const handlers = {
     } catch (e) {
       error = String(e.message || e);
     }
+    // Auto-save open matplotlib figures only if the code didn't save an image itself (avoids duplicate charts).
+    const isImage = p => /\.(png|jpe?g|gif|svg)$/i.test(p);
+    const savedByCode = listFiles().some(f => before.get(f.path) !== f.mtime && isImage(f.path));
     let figs = [];
-    try { figs = JSON.parse(ns.get("_save_figures")()); } catch (e) {}
+    try { figs = JSON.parse(ns.get("_save_figures")(!savedByCode)); } catch (e) {}
     const changed = listFiles().filter(f => before.get(f.path) !== f.mtime).map(f => f.path);
     return { stdout: out.join("\n"), result, error, changed, figs };
   },
@@ -806,6 +823,8 @@ const chatEl = $("chat");
 const INTRO_HTML = chatEl.innerHTML;
 window.DOMPurify?.addHook("afterSanitizeAttributes", n => { if (n.tagName === "A") { n.setAttribute("target", "_blank"); n.setAttribute("rel", "noopener noreferrer"); } });
 function scrollDown() { chatEl.scrollTop = chatEl.scrollHeight; }
+// Only follow new content if the reader is already near the bottom (don't yank them away while reading).
+function followDown() { if (chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight < 160) scrollDown(); }
 function hideEmpty() { $("empty")?.remove(); }
 function md(text) {
   // model headings become h4-h6 so they sit below the "You"/"Agent" h3 in the page outline
@@ -816,13 +835,14 @@ function md(text) {
     return html.replace(/<(\/?)h([1-6])\b/g, (_, sl, n) => `<${sl}h${Math.min(6, +n + shift)}`);
   } catch { return "<pre>" + esc(text) + "</pre>"; }
 }
-function addMsg(role, text) {
+function addMsg(role, text, parent) {
   hideEmpty();
   const d = document.createElement("div");
-  d.className = "msg " + role;
+  d.className = "msg " + role + (parent ? " interim" : "");
   d.innerHTML = `<h3 class="who">${role === "user" ? "You" : "Agent"}</h3><div class="bubble">${role === "user" ? esc(text).replace(/\n/g, "<br>") : md(text)}</div>`;
-  chatEl.append(d); scrollDown();
-  if (role !== "user") announce("Agent replied: " + d.querySelector(".bubble").textContent.slice(0, 400));
+  (parent || chatEl).append(d);
+  if (parent) followDown(); else scrollDown();
+  if (role !== "user" && !parent) announce("Agent replied: " + d.querySelector(".bubble").textContent.slice(0, 400));
   return d;
 }
 function note(text, isErr) {
@@ -838,26 +858,64 @@ function announce(text) {
   a.textContent = "";
   setTimeout(() => { a.textContent = text; }, 50); // re-set so repeated messages are announced
 }
-function addThinking(text) {
+function addThinking(text, parent) {
   const d = document.createElement("details");
   d.className = "think";
   d.innerHTML = `<summary><span aria-hidden="true">💭 </span>Model's reasoning</summary><pre>${esc(text)}</pre>`;
-  chatEl.append(d); scrollDown();
+  (parent || chatEl).append(d); followDown();
+}
+
+// All intermediate steps of one request (reasoning, tool calls, interim remarks) go into one collapsed group,
+// so the question and the final answer stay close together. Charts are shown below the group.
+function stepGroup() {
+  const run = { el: null, body: null, figures: null, counts: new Map(), steps: 0, errors: 0, t0: performance.now() };
+  run.ensure = () => {
+    if (run.el) return run.body;
+    run.el = document.createElement("details");
+    run.el.className = "steps";
+    run.el.innerHTML = `<summary><span aria-hidden="true">🔧</span><span class="gtitle">Working…</span><span class="gdetail"></span></summary><div class="sbody"></div>`;
+    run.body = run.el.querySelector(".sbody");
+    chatEl.append(run.el); followDown();
+    return run.body;
+  };
+  run.progress = (text) => { run.ensure(); run.el.querySelector(".gdetail").textContent = text; };
+  run.addTool = (name) => { run.steps++; run.counts.set(name, (run.counts.get(name) || 0) + 1); run.progress(`step ${run.steps} · ${name}`); };
+  run.finish = (outcome) => {
+    if (!run.el) return;
+    const secs = ((performance.now() - run.t0) / 1000).toFixed(1);
+    const tools = [...run.counts].map(([n, c]) => c > 1 ? `${n} ×${c}` : n).join(", ");
+    run.el.querySelector(".gtitle").textContent = run.steps ? `${run.steps} agent step${run.steps > 1 ? "s" : ""}` : "Agent notes";
+    run.el.querySelector(".gdetail").textContent = [tools, run.errors ? `${run.errors} error${run.errors > 1 ? "s" : ""}` : "", `${secs}s`, outcome || ""].filter(Boolean).join(" · ");
+  };
+  run.addFigure = (img, name) => {
+    if (!run.figures) {
+      run.figures = document.createElement("div");
+      run.figures.className = "figures";
+      (run.el || chatEl.lastElementChild).after(run.figures);
+    }
+    const fig = document.createElement("figure");
+    const cap = document.createElement("figcaption");
+    cap.textContent = name;
+    fig.append(img, cap);
+    run.figures.append(fig);
+    followDown();
+  };
+  return run;
 }
 function briefArgs(name, args) {
   if (name === "run_python") return (args.code || "").split("\n").find(l => l.trim()) || "";
   return Object.values(args).map(v => typeof v === "string" ? v : JSON.stringify(v)).join(", ");
 }
-function addToolCard(step, name, args) {
+function addToolCard(step, name, args, parent) {
   const d = document.createElement("details");
   d.className = "tool";
   const argHtml = name === "run_python" ? `<pre>${esc(args.code || "")}</pre>` : `<pre>${esc(JSON.stringify(args, null, 2))}</pre>`;
   d.innerHTML = `<summary><span aria-hidden="true">🔧</span><span class="sr-only">Tool call, step ${step}: </span><span class="name">${esc(name)}</span><span class="brief">${esc(briefArgs(name, args))}</span><span class="st"><span aria-hidden="true">⏳ </span>running…</span></summary>
     <div class="body"><div class="label">Step ${step} · the model asked to run</div>${argHtml}<div class="label">Result sent back to the model</div><pre class="res">…</pre></div>`;
-  chatEl.append(d); scrollDown();
+  (parent || chatEl).append(d); followDown();
   return d;
 }
-async function finishToolCard(card, result, ms, ok, images) {
+async function finishToolCard(card, result, ms, ok, images, run) {
   card.querySelector(".st").innerHTML = `<span aria-hidden="true">${ok ? "✅" : "⚠️"} </span><span class="sr-only">${ok ? "succeeded" : "had an error"}, </span>${(ms / 1000).toFixed(1)}s`;
   card.querySelector(".res").textContent = result;
   for (const p of images || []) {
@@ -866,11 +924,18 @@ async function finishToolCard(card, result, ms, ok, images) {
       const img = document.createElement("img");
       img.src = URL.createObjectURL(new Blob([data], { type: p.endsWith(".svg") ? "image/svg+xml" : "image/png" }));
       img.alt = `Image ${p} created by Python`;
-      card.querySelector(".body").append(img);
-      card.open = true;
+      if (run) {
+        run.addFigure(img, p);
+        const hint = document.createElement("div");
+        hint.className = "label";
+        hint.textContent = `Image ${p} is shown below the steps`;
+        card.querySelector(".body").append(hint);
+      } else {
+        card.querySelector(".body").append(img);
+      }
     } catch {}
   }
-  scrollDown();
+  followDown();
 }
 
 // ---------------- Agent loop ----------------
@@ -996,7 +1061,9 @@ async function runAgent(userText) {
   }
   if (!gw() && !settings.model) { note("Please choose a model in Settings first (click “Load model list”).", true); return; }
   if (!gw() && !settings.apikey) note("No API key set — the request will probably be rejected. Enter a key in Settings.", true);
-  addMsg("user", userText);
+  const userEl = addMsg("user", userText);
+  const run = stepGroup();
+  let outcome = "";
   const previousWebState = webStateSent;
   messages.push({ role: "user", content: webStateNote() + userText });
   webStateSent = webAllowed;
@@ -1016,19 +1083,23 @@ async function runAgent(userText) {
       if (!toolCalls.length) { toolCalls = extractTextToolCalls(content); textCalls = toolCalls.length > 0; }
       toolCalls.forEach((tc, i) => { if (!tc.id) tc.id = "call_" + step + "_" + i; tc.type = "function"; });
 
-      if (thinking) addThinking(thinking);
+      if (thinking) addThinking(thinking, run.ensure());
       const assistantMsg = { role: "assistant", content: textCalls ? content.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "").trim() : content };
       if (toolCalls.length) assistantMsg.tool_calls = toolCalls.map(tc => ({ id: tc.id, type: "function", function: { name: tc.function.name, arguments: typeof tc.function.arguments === "string" ? tc.function.arguments : JSON.stringify(tc.function.arguments ?? {}) } }));
       messages.push(assistantMsg);
 
       if (!toolCalls.length) {
+        run.finish();
         addMsg("assistant", content || (finish === "length" ? "_(The response was cut off — output length limit reached.)_" : "_(empty response)_"));
+        // Bring the question back into view with the (collapsed) steps and the start of the answer.
+        if (run.el) userEl.scrollIntoView({ block: "start" });
         break;
       }
-      if (content && !textCalls) addMsg("assistant", content);
+      if (content && !textCalls) addMsg("assistant", content, run.ensure());
 
       if (step >= maxSteps) {
         for (const tc of assistantMsg.tool_calls) messages.push({ role: "tool", tool_call_id: tc.id, content: "Not executed: step limit reached." });
+        outcome = "step limit reached";
         note(`Stopped after ${maxSteps} tool steps (limit set in Settings). You can say "continue".`, true);
         break;
       }
@@ -1041,7 +1112,8 @@ async function runAgent(userText) {
         let card;
         try {
           args = parseArgs(tc.function.arguments);
-          card = addToolCard(step, name, args);
+          run.addTool(name);
+          card = addToolCard(step, name, args, run.body);
           $("stepinfo").textContent = `🔧 Running ${name}… (step ${step})`;
           if (!executors[name]) throw new Error(`Unknown tool '${name}'. Available: ${TOOLS.map(t => t.name).join(", ")}`);
           result = await executors[name](args, ctx);
@@ -1051,15 +1123,17 @@ async function runAgent(userText) {
           if (e.name === "AbortError" || signal.aborted) throw e;
           ok = false;
           result = "ERROR: " + e.message;
-          if (!card) card = addToolCard(step, name, { raw_arguments: tc.function.arguments });
+          if (!card) { run.addTool(name); card = addToolCard(step, name, { raw_arguments: tc.function.arguments }, run.body); }
         }
+        if (!ok) run.errors++;
         result = truncate(result);
-        await finishToolCard(card, result, performance.now() - t0, ok, ctx.images);
+        await finishToolCard(card, result, performance.now() - t0, ok, ctx.images, run);
         messages.push({ role: "tool", tool_call_id: tc.id, content: result });
         if (signal.aborted) throw new DOMException("Stopped", "AbortError");
       }
     }
   } catch (e) {
+    outcome = (e.name === "AbortError" || signal.aborted) ? "stopped" : "failed";
     if (e.name === "AbortError" || signal.aborted) note("⏹ Stopped by user.");
     else {
       let m = e.message;
@@ -1078,6 +1152,7 @@ async function runAgent(userText) {
       if (e.signedOut && !$("input").value) $("input").value = userText; // ready to resend after signing in
     }
   } finally {
+    run.finish(outcome);
     setBusy(false);
     $("stepinfo").textContent = step ? `Done — ${step} tool step${step > 1 ? "s" : ""}${tokens ? `, ${tokens.toLocaleString()} tokens in last request` : ""}.` : (tokens ? `${tokens.toLocaleString()} tokens.` : "");
     refreshFiles();

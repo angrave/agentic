@@ -59,7 +59,7 @@ const tools = requests.flatMap(r => r.messages.filter(m => m.role === "tool"));
 const last = requests[requests.length - 1].messages;
 const toolContents = last.filter(m => m.role === "tool").map(m => m.content);
 console.log("Requests:", requests.length);
-const expect = (cond, m) => cond ? console.log("ok  -", m) : fail(m);
+const expect = (cond, m, extra = "") => cond ? console.log("ok  -", m) : fail(m + "  → " + extra);
 expect(requests.length === SCRIPT.length, "all scripted steps executed");
 expect(requests[0].tools?.length === 6, "6 tools sent");
 expect(toolContents[0].includes("sales_2025.xlsx") && toolContents[0].includes("planning_memo.docx"), "list_files output");
@@ -72,8 +72,22 @@ expect(toolContents[6].includes("Saved 12 bytes to data.csv"), "fetch_url save")
 expect(toolContents[7].includes("data.csv") && toolContents[7].includes("by_region.xlsx"), "text <tool_call> fallback executed");
 const asst = last.filter(m => m.role === "assistant");
 expect(asst.every(m => !m.tool_calls || m.tool_calls.every(t => last.some(x => x.role === "tool" && x.tool_call_id === t.id))), "every tool_call has a response");
-expect(await page.locator(".tool img").count() >= 1, "chart image rendered");
-expect(await page.locator(".think").count() >= 1, "thinking shown");
+expect(await page.locator(".figures img").count() >= 1, "chart image rendered outside the collapsed steps");
+expect(await page.locator(".steps .think").count() >= 1, "thinking shown inside the steps group");
+// Grouping: one collapsed group holding every intermediate step; question and final answer outside it.
+const groups = page.locator("#chat > details.steps");
+expect(await groups.count() === 1, "one steps group for the request", await groups.count());
+expect(!(await groups.first().evaluate(d => d.open)), "steps group collapsed by default");
+const gsum = await groups.first().locator(":scope > summary").innerText();
+expect(/8 agent steps/.test(gsum) && /read_file ×3/.test(gsum) && /run_python ×2/.test(gsum) && /2 errors/.test(gsum), "group summary counts steps, tools and errors", gsum);
+expect(await page.locator(".steps .tool").count() === 8, "all 8 tool cards inside the group");
+expect(await page.locator(".steps .msg.interim").count() === 1 && await page.locator("#chat > .msg.assistant").count() === 1, "interim remark inside group; only the final answer outside");
+const order = await page.evaluate(() => [...document.querySelectorAll("#chat > *")].map(e => e.className.split(" ")[0]).join(">"));
+expect(/msg>(note>)?steps>figures>msg/.test(order), "order: question, steps, charts, answer", order);
+const chatBox = await page.locator("#chat").boundingBox(), qBox = await page.locator("#chat > .msg.user").boundingBox();
+expect(qBox.y >= chatBox.y - 1 && qBox.y < chatBox.y + chatBox.height, "question scrolled back into view after the answer", JSON.stringify({ chatBox, qBox }));
+await groups.first().locator(":scope > summary").click();
+expect(await page.locator(".steps .tool").first().isVisible(), "clicking the group reveals the individual steps");
 expect((await page.locator("#files").innerText()).includes("figure_1.png"), "files panel updated");
 await page.screenshot({ path: "shot_mock.png", fullPage: false });
 
