@@ -51,3 +51,6 @@ Live: run `python3 proxy/local_proxy.py`, then `LUMEN_API_KEY=... node live.mjs 
 
 ## License
 MIT — see [LICENSE](LICENSE).
+
+## Illinois sign-in prototype
+See [auth-howto.md](auth-howto.md) and the demo at https://angrave.github.io/agentic/auth-demo/.

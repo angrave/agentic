@@ -1,0 +1,46 @@
+# Auth gateway prototype. Deploy: cd auth && npx wrangler deploy
+name = "agentic-auth"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+
+[vars]
+ALLOWED_ORIGINS = "https://angrave.github.io,http://localhost:8000,http://127.0.0.1:8000"
+SESSION_TTL = "28800"
+UPSTREAM = "https://lumen.ncsa.illinois.edu/v1"
+# Real providers: uncomment/fill in after registering clients (see ../auth-howto.md).
+# Callback URL to register with each provider: https://agentic-auth.<subdomain>.workers.dev/auth/callback
+PROVIDERS = '''
+{
+}
+'''
+# Example PROVIDERS value:
+# {
+#   "cilogon": {
+#     "label": "Illinois NetID (CILogon)",
+#     "issuer": "https://cilogon.org",
+#     "client_id": "cilogon:/client_id/REPLACE",
+#     "scope": "openid email profile org.cilogon.userinfo",
+#     "auth_params": { "idphint": "urn:mace:incommon:uiuc.edu" },
+#     "rules": [ { "claim": "idp", "equals": "urn:mace:incommon:uiuc.edu", "message": "please sign in with your Illinois NetID" } ]
+#   },
+#   "google": {
+#     "label": "Illinois Google account",
+#     "issuer": "https://accounts.google.com",
+#     "client_id": "REPLACE.apps.googleusercontent.com",
+#     "auth_params": { "hd": "illinois.edu", "prompt": "select_account" },
+#     "rules": [ { "claim": "hd", "equals": "illinois.edu", "message": "use your @illinois.edu Google account" },
+#                { "claim": "email_verified", "isTrue": true } ]
+#   },
+#   "microsoft": {
+#     "label": "Illinois Microsoft account",
+#     "issuer": "https://login.microsoftonline.com/44467e6f-462c-4ea2-823f-7800de5434e3/v2.0",
+#     "client_id": "REPLACE-app-id",
+#     "auth_params": { "domain_hint": "illinois.edu" },
+#     "rules": [ { "claim": "tid", "equals": "44467e6f-462c-4ea2-823f-7800de5434e3", "message": "use your Illinois Microsoft account" } ]
+#   }
+# }
+#
+# Secrets (never commit): npx wrangler secret put SESSION_SECRET
+#                         npx wrangler secret put CILOGON_CLIENT_SECRET   (and GOOGLE_/MICROSOFT_ as needed)
+#                         npx wrangler secret put LUMEN_API_KEY           (only after removing MOCK_IDP_PRIVATE_JWK)
+#                         npx wrangler secret put MOCK_IDP_PRIVATE_JWK    (demo only)
